@@ -1,0 +1,31 @@
+{
+  "name": "eth-confluence-sim",
+  "private": true,
+  "version": "1.0.0",
+  "description": "ETH-focused trading simulator: multi-timeframe confluence, DCA plan, backtests on Binance history plus live paper trading.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "node e2e/run-e2e.mjs",
+    "data:download": "node research/download.ts",
+    "research": "node research/run-research.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "fast-check": "3.23.2",
+    "typescript": "5.9.3",
+    "vite": "7.3.8",
+    "vite-plugin-singlefile": "2.3.4",
+    "vitest": "3.2.7"
+  },
+  "dependencies": {
+    "lightweight-charts": "5.3.0",
+    "preact": "10.29.8"
+  }
+}
