@@ -242,8 +242,8 @@ export function PlanCard(props: { plan: PlanState; run: RunView | undefined; pri
         </div>
         {props.currency !== 'USD' && (
           <div class="tiny faint">
-            ETH prices are Binance USDT prices. At today's {fmtMoney(props.fx, props.currency)} per $1 your zone is {fmtMoney(p.zoneLow * props.fx, props.currency, true)}-
-            {fmtMoney(p.zoneHigh * props.fx, props.currency, true)} and your target {fmtMoney(p.target * props.fx, props.currency, true)} per ETH.
+            ETH prices are Binance USDT prices. At today's {fmtMoney(props.fx, props.currency)} per $1 your zone is {fmtMoney(p.zoneLow * props.fx, props.currency)}-
+            {fmtMoney(p.zoneHigh * props.fx, props.currency)} and your target {fmtMoney(p.target * props.fx, props.currency)} per ETH.
           </div>
         )}
         <div class="kv">
