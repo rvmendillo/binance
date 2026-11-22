@@ -1,0 +1,112 @@
+name: Test and build iOS app
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit + end-to-end tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Install Playwright (tests only, not an app dependency)
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - run: npm run e2e
+
+  ios:
+    name: Build iOS app (unsigned IPA) and launch it in the simulator
+    needs: test
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npm run build
+      - name: Bundle the web app into the iOS project
+        run: |
+          mkdir -p ios/Confluence/www
+          cp dist/index.html ios/Confluence/www/index.html
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+      - name: Build for iPhone (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          cd ios
+          xcodebuild -project Confluence.xcodeproj -scheme Confluence -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet build
+          APP=build/Build/Products/Release-iphoneos/Confluence.app
+          plutil -p "$APP/Info.plist" | grep -E "CFBundle(Identifier|DisplayName|ShortVersionString)|MinimumOSVersion"
+          test -f "$APP/www/index.html"
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qry ../Confluence-unsigned.ipa Payload
+          ls -la ../Confluence-unsigned.ipa
+      - name: Build for the simulator and launch it
+        run: |
+          set -euo pipefail
+          cd ios
+          xcodebuild -project Confluence.xcodeproj -scheme Confluence -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build-sim \
+            CODE_SIGNING_ALLOWED=NO -quiet build
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          best = None
+          for rt, devs in json.load(sys.stdin)["devices"].items():
+              if "iOS" not in rt: continue
+              for d in devs:
+                  if d.get("isAvailable") and d["name"].startswith("iPhone"):
+                      key = (rt, d["name"])
+                      if best is None or key > best[0]: best = (key, d["udid"], d["name"], rt)
+          print(best[1]); print(best[2], best[3], file=sys.stderr)')
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build-sim/Build/Products/Release-iphonesimulator/Confluence.app
+          xcrun simctl launch "$UDID" app.confluence.ethsim
+          sleep 50
+          xcrun simctl io "$UDID" screenshot ../ios-simulator.png
+          xcrun simctl ui "$UDID" appearance dark
+          sleep 5
+          xcrun simctl io "$UDID" screenshot ../ios-simulator-dark.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Confluence-ios
+          path: |
+            Confluence-unsigned.ipa
+            ios-simulator.png
+            ios-simulator-dark.png
+      - name: Publish the build as a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=ios-latest
+          SHORT=$(git rev-parse --short HEAD)
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" Confluence-unsigned.ipa ios-simulator.png ios-simulator-dark.png \
+            --prerelease --target "$GITHUB_SHA" \
+            --title "Confluence for iPhone (unsigned build $SHORT)" \
+            --notes-file ios/RELEASE_NOTES.md

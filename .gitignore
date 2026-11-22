@@ -6,7 +6,10 @@ research/out/
 .DS_Store
 ios/build/
 ios/*.xcodeproj/
-ios/ETHSim/www/
+ios/Confluence/www/
+ios/build-sim/
+ios/Payload/
+*.ipa
 e2e/out/
 .env
 .env.*
