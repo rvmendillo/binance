@@ -15,6 +15,8 @@ export interface CandleSet {
   rows: KlineRow[];
   /** The candle still forming right now, if known. */
   forming: Kline | null;
+  /** Maximum closed candles kept (the requested window plus a small margin). */
+  cap: number;
 }
 
 export type FeedStatus = 'connecting' | 'live' | 'polling' | 'offline';
@@ -55,6 +57,7 @@ export class Market {
     const wantFrom = Math.floor((now - days * DAY) / tf.ms) * tf.ms;
     let rows = this.sets.get(key)?.rows ?? (await readCandles(key)) ?? [];
     if (rows.length && rows[0][0] > wantFrom + tf.ms) rows = []; // cache does not reach back far enough
+    if (rows.length && rows[rows.length - 1][0] < wantFrom) rows = []; // cache is older than the whole window
     const from = rows.length ? rows[rows.length - 1][0] + 1 : wantFrom;
     const total = Math.max(1, (now - from) / tf.ms);
     const fetched = await this.client.klinesRange(symbol, interval, from, now, (n) => onProgress?.(Math.min(1, n / total)));
@@ -64,7 +67,7 @@ export class Market {
     }
     const cap = maxRows(interval, days);
     if (rows.length > cap) rows = rows.slice(rows.length - cap);
-    const set: CandleSet = { symbol, interval, rows, forming };
+    const set: CandleSet = { symbol, interval, rows, forming, cap };
     this.sets.set(key, set);
     void writeCandles(key, rows);
     return set;
@@ -80,6 +83,7 @@ export class Market {
       if (!last || k.t > last[0]) {
         // a gap means we missed candles while disconnected: the caller repairs it
         set.rows.push(klineToRow(k));
+        if (set.rows.length > set.cap) set.rows.splice(0, set.rows.length - set.cap);
         void writeCandles(this.key(symbol, interval), set.rows);
         return true;
       }
@@ -97,6 +101,7 @@ export class Market {
     const fetched = await this.client.klinesRange(symbol, interval, set.rows[set.rows.length - 1][0] + 1, Date.now());
     const { closed, forming } = splitClosed(fetched, Date.now());
     for (const k of closed) if (k.t > set.rows[set.rows.length - 1][0]) set.rows.push(klineToRow(k));
+    if (set.rows.length > set.cap) set.rows.splice(0, set.rows.length - set.cap);
     set.forming = forming ?? set.forming;
     if (set.rows.length !== before) void writeCandles(this.key(symbol, interval), set.rows);
     return set.rows.length !== before;
@@ -149,9 +154,10 @@ export class LiveFeed {
   onStatus: (s: FeedStatus) => void = () => {};
   onReconnect: () => void = () => {};
   private hosts: string[];
-  private WS: typeof WebSocket | undefined;
+  private WS: typeof WebSocket | null;
 
-  constructor(hosts = WS_HOSTS, WS: typeof WebSocket | undefined = typeof WebSocket !== 'undefined' ? WebSocket : undefined) {
+  /** `WS` = null means WebSockets are unavailable (the feed reports 'polling'). */
+  constructor(hosts = WS_HOSTS, WS: typeof WebSocket | null = typeof WebSocket !== 'undefined' ? WebSocket : null) {
     this.hosts = hosts;
     this.WS = WS;
   }
