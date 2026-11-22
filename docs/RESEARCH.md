@@ -1,10 +1,10 @@
 # Research results
 
-Generated 2026-11-22 12:28 UTC by `research/run-research.ts` from Binance spot data. All results are simulations after fees and slippage; past results do not guarantee future results.
+Generated 2026-11-22 12:53 UTC by `research/run-research.ts` from Binance spot data. All results are simulations after fees and slippage; past results do not guarantee future results.
 
 ## 1. Long-term on ETH (daily candles, 3% staking on held ETH)
 
-Data: 3384 daily ETHUSDT candles, 2017-08-17 to 2026-11-21. Start capital $10,000, fee 0.10% per fill, slippage 0.05%.
+Data: 3384 daily ETHUSDT candles, 2017-08-17 to 2026-11-21. Start capital $10,000, buys of $500 a week, fee 0.10% per fill, slippage 0.05%. Sections 1-4 are in US dollars (the market's currency); section 5 shows the same plan in pesos.
 In-sample = 2018-2022 (used when choosing defaults), out-of-sample = 2023 to now (never used for choices).
 
 ### In-sample 2018-04-24 to 2022-12-31
@@ -113,4 +113,26 @@ ETH last daily close: 1685.63 (2026-11-21). 1,000 synthetic 3-year futures, each
 |---|---:|---:|---:|---:|---|---:|
 | Historical trend kept | 11% | 30% | 49% | 58% | $27430 / $35737 / $45844 | $31993 |
 | No trend (volatility only) | 10% | 24% | 40% | 49% | $26420 / $34241 / $44901 | $31993 |
+
+## 5. Your plan in Philippine pesos
+
+Start ₱500,000, buys of ₱25,000 converted at each day's USD/PHP reference rate (European Central Bank via Frankfurter). The peso went from ₱52.20 per $1 on 2018-04-24 to ₱63.78 on 2026-11-21, so peso returns are higher than dollar returns.
+
+### Out-of-sample 2023-01-01 to now (in pesos)
+
+| Strategy | Return | Per year | Worst drop | Final value |
+|---|---:|---:|---:|---:|
+| Buy & hold + staking | +81.4% | +16.5% | -64% | ₱906,750 |
+| **My plan** (DCA $1500-1700, sell $4000) | +198.7% | +32.5% | -15% | ₱1,493,545 |
+| Plan + confluence timing | +185.6% | +30.9% | -18% | ₱1,427,881 |
+| Confluence allocator | +61.3% | +13.1% | -45% | ₱806,486 |
+
+### Full 2018-04-24 to now (in pesos)
+
+| Strategy | Return | Per year | Worst drop | Final value |
+|---|---:|---:|---:|---:|
+| Buy & hold + staking | +312.8% | +18.0% | -89% | ₱2,063,933 |
+| **My plan** (DCA $1500-1700, sell $4000) | +276.6% | +16.7% | -18% | ₱1,882,996 |
+| Plan + confluence timing | +253.9% | +15.9% | -19% | ₱1,769,667 |
+| Confluence allocator | +1182.8% | +34.6% | -56% | ₱6,413,929 |
 

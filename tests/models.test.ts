@@ -3,7 +3,7 @@ import type { BacktestResult } from '../src/engine/backtest.ts';
 import { choleskySolve, EdgeEstimator, expectedR, LogisticModel, tripleBarrier } from '../src/engine/edge.ts';
 import { computeMetrics } from '../src/engine/metrics.ts';
 import { projectPlan } from '../src/engine/planProjection.ts';
-import { DEFAULT_SETTINGS, MODE_ORDER } from '../src/engine/presets.ts';
+import { MODE_ORDER, USD_SETTINGS } from '../src/engine/presets.ts';
 import { bootstrapPricePaths, bootstrapProjection, compound, yearsToMultiple } from '../src/engine/projection.ts';
 import { Rng } from '../src/engine/rng.ts';
 import { simulate } from '../src/engine/simulate.ts';
@@ -143,7 +143,7 @@ describe('projections', () => {
   });
   it('plan projection runs the plan forward from its real current state', () => {
     const d = fixtureSeries('eth-1d-history.json');
-    const pj = projectPlan(d, DEFAULT_SETTINGS, { startIndex: 250, days: 365, paths: 60, seed: 8 });
+    const pj = projectPlan(d, USD_SETTINGS, { startIndex: 250, days: 365, paths: 60, seed: 8 });
     expect(pj.hitBy.map((h) => h.days)).toEqual([90, 180, 365]);
     for (let k = 1; k < pj.hitBy.length; k++) expect(pj.hitBy[k].prob).toBeGreaterThanOrEqual(pj.hitBy[k - 1].prob);
     expect(pj.planValue.p10).toBeLessThanOrEqual(pj.planValue.p50);
@@ -157,7 +157,7 @@ describe('simulate() on real data for every mode', () => {
   it.each(MODE_ORDER)('%s mode returns finite metrics and a decision', (mode) => {
     const s = mode === 'long' ? fixtureSeries('eth-1d-history.json') : fixtureSeries('eth-1h-2025H1.json');
     // the 1h fixture stands in for every intraday mode, with timeframes it can build
-    const settings = mode === 'long' ? DEFAULT_SETTINGS : { ...DEFAULT_SETTINGS, customTfs: { [mode]: ['2h', '4h', '12h', '1d'] } };
+    const settings = mode === 'long' ? USD_SETTINGS : { ...USD_SETTINGS, customTfs: { [mode]: ['2h', '4h', '12h', '1d'] } };
     const base = mode === 'long' ? s : s;
     const res = simulate('ETHUSDT', mode, base, mode === 'long' ? settings : settings, mode === 'long' ? {} : { startIndex: 700 });
     expect(['BUY', 'SELL', 'HOLD', 'WAIT']).toContain(res.decision.action);

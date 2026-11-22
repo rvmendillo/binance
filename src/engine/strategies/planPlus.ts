@@ -8,6 +8,7 @@
  */
 import type { Ctx, Fill, Strategy } from '../backtest.ts';
 import type { Confluence } from '../confluence.ts';
+import { ONE, type RateFn } from '../fx.ts';
 import { DAY } from '../timeframe.ts';
 import type { DcaPlanParams } from './dcaPlan.ts';
 
@@ -40,7 +41,7 @@ export const DEFAULT_PLAN_PLUS: PlanPlusParams = {
   exitD: -0.15,
 };
 
-export function planPlus(cf: Confluence, plan: DcaPlanParams, pp: PlanPlusParams = DEFAULT_PLAN_PLUS, name = 'Plan+ (confluence timing)'): Strategy {
+export function planPlus(cf: Confluence, plan: DcaPlanParams, pp: PlanPlusParams = DEFAULT_PLAN_PLUS, name = 'Plan+ (confluence timing)', rate: RateFn = ONE): Strategy {
   const target = Math.min(...plan.takeProfit.map((l) => l.price));
   const base = cf.feats[0];
   let t0 = Number.NaN;
@@ -83,7 +84,8 @@ export function planPlus(cf: Confluence, plan: DcaPlanParams, pp: PlanPlusParams
       const A = cf.A[i];
       const H = cf.H[i];
       const day = Math.floor((c.s.t[i] - t0) / DAY);
-      if (plan.contribution && plan.contribution.amount > 0 && day % plan.contribution.everyDays === 0) c.addCash(plan.contribution.amount);
+      const k = rate(c.s.t[i]);
+      if (plan.contribution && plan.contribution.amount > 0 && day % plan.contribution.everyDays === 0) c.addCash(plan.contribution.amount / k);
       strong = Number.isFinite(D) && D >= pp.runD && A >= pp.runA;
 
       // Riding the trend with the remainder after a partial sell at the target
@@ -104,7 +106,7 @@ export function planPlus(cf: Confluence, plan: DcaPlanParams, pp: PlanPlusParams
           c.note('Buy paused: every timeframe still falling');
         } else {
           const turningUp = Number.isFinite(D) && D > pp.upD && base.dir[i] > base.dir[i - 1];
-          const amt = plan.buyAmount * (turningUp ? pp.upMult : 1);
+          const amt = (plan.buyAmount / k) * (turningUp ? pp.upMult : 1);
           c.buy(Math.min(amt, c.p.cash), turningUp ? 'DCA in zone, timeframes turning up' : 'DCA in zone');
         }
       }

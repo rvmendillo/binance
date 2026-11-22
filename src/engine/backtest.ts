@@ -27,6 +27,8 @@ export interface Fill {
   quote: number;
   fee: number;
   reason: string;
+  /** Number of the round trip this fill belongs to (index into `trades`; the open one is trades.length). */
+  trade: number;
 }
 
 export interface Trade {
@@ -208,7 +210,7 @@ export function runBacktest(s: Series, strategy: Strategy, opts: BacktestOptions
     st.open.qtyBought += qty;
     st.open.buyNotional += price * qty;
     st.open.fees += fee;
-    const f: Fill = { i, time: s.t[i], side: 'buy', price, qty, quote, fee, reason };
+    const f: Fill = { i, time: s.t[i], side: 'buy', price, qty, quote, fee, reason, trade: trades.length };
     fills.push(f);
     return f;
   };
@@ -224,7 +226,7 @@ export function runBacktest(s: Series, strategy: Strategy, opts: BacktestOptions
     if (p.qty < DUST) p.qty = 0;
     p.cash += gross - fee;
     p.feesPaid += fee;
-    const f: Fill = { i, time: s.t[i], side: 'sell', price, qty, quote: gross - fee, fee, reason };
+    const f: Fill = { i, time: s.t[i], side: 'sell', price, qty, quote: gross - fee, fee, reason, trade: trades.length };
     fills.push(f);
     if (st.open) {
       st.open.proceeds += gross - fee;

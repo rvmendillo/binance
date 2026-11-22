@@ -5,6 +5,7 @@
  * Designed for daily bars; decisions use the daily close and execute at the next open.
  */
 import type { Ctx, Fill, Strategy } from '../backtest.ts';
+import { ONE, type RateFn } from '../fx.ts';
 import { DAY } from '../timeframe.ts';
 
 export interface TakeProfitLevel {
@@ -20,12 +21,12 @@ export interface DcaPlanParams {
   buyBelowZone: boolean;
   /** Days between scheduled buys (1 = daily, 7 = weekly). */
   buyEveryDays: number;
-  /** Quote amount per scheduled buy. */
+  /** Amount per scheduled buy, in the account currency (converted to USDT at that day's rate). */
   buyAmount: number;
   takeProfit: TakeProfitLevel[];
   /** Start buying again after selling everything. */
   repeat: boolean;
-  /** Optional recurring deposit. */
+  /** Optional recurring deposit, in the account currency. */
   contribution?: { amount: number; everyDays: number };
 }
 
@@ -51,7 +52,8 @@ export function validateDcaPlan(p: DcaPlanParams): string[] {
   return errs;
 }
 
-export function dcaPlan(params: DcaPlanParams, name = 'My plan (zone DCA)'): Strategy {
+/** `rate` converts the account currency to USDT (account units per 1 USDT on a given day). */
+export function dcaPlan(params: DcaPlanParams, name = 'My plan (zone DCA)', rate: RateFn = ONE): Strategy {
   const levels = [...params.takeProfit].sort((a, b) => a.price - b.price);
   let hit = new Array<boolean>(levels.length).fill(false);
   let done = false;
@@ -92,14 +94,15 @@ export function dcaPlan(params: DcaPlanParams, name = 'My plan (zone DCA)'): Str
     onBar: (c: Ctx) => {
       const i = c.i;
       const day = Math.floor((c.s.t[i] - t0) / DAY);
+      const k = rate(c.s.t[i]);
       if (params.contribution && params.contribution.amount > 0 && day % params.contribution.everyDays === 0) {
-        c.addCash(params.contribution.amount);
+        c.addCash(params.contribution.amount / k);
       }
       const px = c.s.c[i];
       const inZone = px >= params.zoneLow && px <= params.zoneHigh;
       const below = px < params.zoneLow;
       if (!done && day % params.buyEveryDays === 0 && (inZone || (below && params.buyBelowZone)) && c.p.cash > 0) {
-        c.buy(Math.min(params.buyAmount, c.p.cash), inZone ? 'DCA in zone' : 'DCA below zone');
+        c.buy(Math.min(params.buyAmount / k, c.p.cash), inZone ? 'DCA in zone' : 'DCA below zone');
       }
       refreshTargets(c);
     },

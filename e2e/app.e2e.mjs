@@ -12,6 +12,7 @@ const { chromium, devices } = require('playwright'); // pre-installed globally
 
 const html = readFileSync(new URL('../dist/index.html', import.meta.url));
 const ethDaily = JSON.parse(readFileSync(new URL('../tests/fixtures/eth-1d-history.json', import.meta.url))).rows;
+const usdphp = readFileSync(new URL('../tests/fixtures/usdphp.json', import.meta.url), 'utf8');
 const NOW = Date.parse('2026-11-01T06:00:00Z'); // the fixture ends with the 2026-10-31 daily candle
 const DAY = 86_400_000;
 const IV = { '1m': 60e3, '15m': 900e3, '1h': 3600e3, '1d': DAY };
@@ -70,7 +71,7 @@ after(async () => {
 });
 
 /** New page with mocked Binance. `rest` can override the REST handler. */
-async function open({ viewport, rest, ws = 'ok', settings } = {}) {
+async function open({ viewport, rest, ws = 'ok', settings, fx = 'ok' } = {}) {
   const ctx = await browser.newContext({ ...devices['iPhone 14'], deviceScaleFactor: 1, ...(viewport ? { viewport } : {}) });
   const page = await ctx.newPage();
   await page.clock.install({ time: NOW });
@@ -78,6 +79,14 @@ async function open({ viewport, rest, ws = 'ok', settings } = {}) {
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   if (settings) await page.addInitScript((s) => localStorage.setItem('confluence.settings.v1', JSON.stringify(s)), settings);
+  // exchange rates: Frankfurter history, and the two "latest rate" fallbacks
+  const fxCalls = [];
+  await page.route(/frankfurter\.dev|open\.er-api\.com|currency-api/, (route) => {
+    fxCalls.push(route.request().url());
+    if (fx === 'fail') return route.fulfill({ status: 503, body: '{}' });
+    if (route.request().url().includes('frankfurter')) return route.fulfill({ body: usdphp, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' } });
+    return route.fulfill({ status: 404, body: '{}' });
+  });
   await page.route(/binance\.(vision|com)\/api\/v3\//, async (route) => {
     const url = route.request().url();
     if (rest) {
@@ -103,7 +112,7 @@ async function open({ viewport, rest, ws = 'ok', settings } = {}) {
     sock.onMessage((m) => messages.push({ at: Date.now(), msg: JSON.parse(String(m)) }));
   });
   await page.goto(base);
-  return { ctx, page, errors, sockets, messages };
+  return { ctx, page, errors, sockets, messages, fxCalls };
 }
 
 const decision = async (page) => (await page.textContent('.decision')).replace(/\s+/g, ' ');
@@ -265,5 +274,51 @@ test('projection screen simulates the plan forward', async () => {
   await page.waitForTimeout(3000);
   assert.match(await page.textContent('.card'), /average trend is removed/);
   assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('money is in Philippine pesos by default, at each day\'s exchange rate', async () => {
+  const { ctx, page, errors, fxCalls } = await open();
+  await page.waitForSelector('.decision .pill', { timeout: 60000 });
+  assert.ok(fxCalls.some((u) => u.includes('frankfurter.dev/v1/2017-08-01..?base=USD&symbols=PHP')), 'loaded the USD/PHP history');
+  // live ETH price shown in pesos, with the Binance USDT price underneath
+  assert.match(await page.textContent('.pricehead .px'), /₱/);
+  assert.match(await page.textContent('.pricehead'), /on Binance/);
+  // plan card: cash and value in pesos; zone and target stay ETH prices in dollars
+  const plan = await page.textContent('section.card:has(h2:text("My plan"))');
+  assert.match(plan, /Cash waiting₱[\d,]+/);
+  assert.match(plan, /Plan value₱[\d,]+/);
+  assert.match(plan, /Zone \$1,500-1,700/);
+  assert.match(plan, /buy ₱25,000 every 7 days/);
+  assert.match(await page.textContent('.footer-note'), /USD to PHP reference rate/);
+  await page.click('.tab:has-text("Settings")');
+  assert.equal(await page.inputValue('#cash'), '500000');
+  assert.match(await page.textContent('label[for=cash]'), /₱/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('switching to US dollars converts the amounts and the display', async () => {
+  const { ctx, page } = await open();
+  await page.waitForSelector('.decision .pill', { timeout: 60000 });
+  await page.click('.tab:has-text("Settings")');
+  await page.click('.seg button:has-text("US dollar")');
+  await page.waitForFunction(() => document.querySelector('#cash')?.value !== '500000', null, { timeout: 15000 });
+  const cash = Number(await page.inputValue('#cash'));
+  // the fixture's latest rate is 63.777 PHP per USD
+  assert.ok(Math.abs(cash - 500000 / 63.777) < 100, `converted capital ${cash}`);
+  assert.match(await page.textContent('label[for=cash]'), /\$/);
+  await page.click('button:has-text("Apply settings")');
+  await page.click('.tab:has-text("ETH")');
+  await page.waitForFunction(() => /Cash waiting\$/.test(document.querySelector('.kv')?.textContent ?? ''), null, { timeout: 30000 });
+  assert.doesNotMatch(await page.textContent('.pricehead .px'), /₱/);
+  await ctx.close();
+});
+
+test('if exchange rates cannot load, it says so instead of showing wrong amounts', async () => {
+  const { ctx, page } = await open({ fx: 'fail' });
+  await page.waitForSelector('.banner.error', { timeout: 60000 });
+  assert.match(await page.textContent('.banner.error'), /exchange rate/);
+  assert.equal(await page.$('.decision'), null);
   await ctx.close();
 });

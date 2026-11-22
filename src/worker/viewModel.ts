@@ -4,6 +4,7 @@
  */
 import type { Fill, Trade } from '../engine/backtest.ts';
 import type { ComponentKey } from '../engine/features.ts';
+import type { Currency } from '../engine/fx.ts';
 import type { Metrics } from '../engine/metrics.ts';
 import { CUSTOM_TF_IDS, type ModeId } from '../engine/presets.ts';
 import { bootstrapProjection, compound, yearsToMultiple, type ProjectionBand } from '../engine/projection.ts';
@@ -69,6 +70,10 @@ export interface ModeView {
   symbol: string;
   mode: ModeId;
   isEth: boolean;
+  /** Money amounts in this view are in `currency`; prices are USDT. */
+  currency: Currency;
+  /** Account currency per 1 USDT on the last candle's day. */
+  fxNow: number;
   price: number;
   lastClosedTime: number;
   computeMs: number;
@@ -128,8 +133,8 @@ export function buildView(res: ModeResult, opts: { computeMs: number; liveSince:
     void dailyTimes;
     const eq = downsample(r.result.times, r.result.equity, 400);
     const ot = r.result.openTrade;
-    const price = res.price;
-    const value = r.result.final.qty * price;
+    // the coin's value per unit in the account currency at the last close
+    const value = r.result.final.qty * r.result.final.price;
     const years = [1, 2, 3, 5];
     return {
       id: r.id,
@@ -165,6 +170,8 @@ export function buildView(res: ModeResult, opts: { computeMs: number; liveSince:
     symbol: res.symbol,
     mode: res.mode,
     isEth: res.isEth,
+    currency: res.currency,
+    fxNow: res.fxNow,
     price: res.price,
     lastClosedTime: res.lastClosedTime,
     computeMs: opts.computeMs,

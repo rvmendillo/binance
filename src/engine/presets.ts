@@ -3,6 +3,7 @@
  * timeframe set (custom timeframes marked *), data window and strategy parameters.
  * Defaults come from the walk-forward research in research/run-research.ts.
  */
+import type { Currency } from './fx.ts';
 import type { AllocatorParams } from './strategies/allocator.ts';
 import { DEFAULT_ALLOCATOR } from './strategies/allocator.ts';
 import type { DcaPlanParams } from './strategies/dcaPlan.ts';
@@ -76,6 +77,9 @@ export const MODE_ORDER: ModeId[] = ['long', 'swing', 'day', 'scalp'];
 export const CUSTOM_TF_IDS = new Set(['2m', '10m', '45m', '2d', '5d', '2w']);
 
 export interface Settings {
+  /** Currency for every money amount shown and entered (prices stay in USDT). */
+  currency: Currency;
+  /** Starting capital, in `currency`. */
   initialCash: number;
   /** Binance spot fee per fill: 0.001 (0.1%), or 0.00075 paying fees with BNB. */
   feeRate: number;
@@ -99,18 +103,27 @@ export interface Settings {
 export const DEFAULT_COINS = ['BTCUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'LINKUSDT', 'AVAXUSDT', 'TRXUSDT', 'SUIUSDT'];
 
 export const DEFAULT_SETTINGS: Settings = {
-  initialCash: 10_000,
+  currency: 'PHP',
+  initialCash: 500_000,
   feeRate: 0.001,
   slippage: 0.0005,
   ethStakingApr: 0.03,
   otherStakingApr: 0,
-  plan: DEFAULT_DCA_PLAN,
+  plan: { ...DEFAULT_DCA_PLAN, buyAmount: 25_000 },
   planPlus: DEFAULT_PLAN_PLUS,
   allocator: { ...DEFAULT_ALLOCATOR, wTrend: 1, sLow: 0, sHigh: 0.2, band: 0.25 },
   trader: { ...DEFAULT_TRADER, shadowWindow: 60, shadowZ: 1.5, evMin: 0.05 },
   customTfs: {},
   coins: DEFAULT_COINS,
   longStart: '2018-01-01',
+};
+
+/** The same defaults expressed in US dollars ($10,000 capital, $500 weekly buys). */
+export const USD_SETTINGS: Settings = {
+  ...DEFAULT_SETTINGS,
+  currency: 'USD',
+  initialCash: 10_000,
+  plan: { ...DEFAULT_DCA_PLAN, buyAmount: 500 },
 };
 
 export function tfsFor(mode: ModeId, settings: Settings): string[] {

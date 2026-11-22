@@ -5,7 +5,7 @@ import { MODE_ORDER, MODES, type ModeId } from '../engine/presets.ts';
 import type { PlanState, StrategyId } from '../engine/simulate.ts';
 import type { ModeView, RunView, TfRowView, TradeView } from '../worker/viewModel.ts';
 import { LinesChart, resolveColor, SERIES_COLORS } from './charts.tsx';
-import { fmtDate, fmtNum, fmtPct, fmtPrice, fmtQty, fmtUsd, scoreStyle } from './format.ts';
+import { fmtDate, fmtMoney, fmtMoneyPrice, fmtNum, fmtPct, fmtQty, fmtUsdt, scoreStyle, type Money } from './format.ts';
 
 export const Icon = {
   eth: (
@@ -220,7 +220,7 @@ export function ConfluenceCard(props: { view: ModeView }) {
 
 const whole = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: x < 10 ? 4 : 0 });
 
-export function PlanCard(props: { plan: PlanState; run: RunView | undefined; price: number; staking: number; buyAmount: number; buyEveryDays: number }) {
+export function PlanCard(props: { plan: PlanState; run: RunView | undefined; price: number; staking: number; buyAmount: number; buyEveryDays: number; currency: Money; fx: number }) {
   const p = props.plan;
   const run = props.run;
   const zonePos = Math.min(1, Math.max(0, (props.price - p.zoneLow * 0.8) / (p.target * 1.05 - p.zoneLow * 0.8)));
@@ -236,10 +236,16 @@ export function PlanCard(props: { plan: PlanState; run: RunView | undefined; pri
           <div style={{ position: 'absolute', top: '4px', height: '26px', width: '3px', borderRadius: '2px', background: 'var(--ink)', left: `${zonePos * 100}%`, transform: 'translateX(-50%)' }} />
         </div>
         <div class="row between tiny muted">
-          <span>Zone {whole(p.zoneLow)}-{whole(p.zoneHigh)}</span>
-          <span>Last close {fmtPrice(props.price)}</span>
-          <span>Target {whole(p.target)}</span>
+          <span>Zone ${whole(p.zoneLow)}-{whole(p.zoneHigh)}</span>
+          <span>Last close {fmtUsdt(props.price)}</span>
+          <span>Target ${whole(p.target)}</span>
         </div>
+        {props.currency !== 'USD' && (
+          <div class="tiny faint">
+            ETH prices are Binance USDT prices. At today's {fmtMoney(props.fx, props.currency)} per $1 your zone is {fmtMoney(p.zoneLow * props.fx, props.currency, true)}-
+            {fmtMoney(p.zoneHigh * props.fx, props.currency, true)} and your target {fmtMoney(p.target * props.fx, props.currency, true)} per ETH.
+          </div>
+        )}
         <div class="kv">
           <div>
             <div class="k">ETH held (staked)</div>
@@ -247,11 +253,12 @@ export function PlanCard(props: { plan: PlanState; run: RunView | undefined; pri
           </div>
           <div>
             <div class="k">Average cost</div>
-            <div class="v">{p.avgCost ? fmtPrice(p.avgCost) : '–'}</div>
+            <div class="v">{p.avgCost ? fmtUsdt(p.avgCost) : '–'}</div>
+            {p.avgCostLocal && props.currency !== 'USD' ? <div class="tiny muted">{fmtMoneyPrice(p.avgCostLocal, props.currency)} paid per ETH</div> : null}
           </div>
           <div>
             <div class="k">Cash waiting</div>
-            <div class="v">{fmtUsd(p.cash)}</div>
+            <div class="v">{fmtMoney(p.cash, props.currency)}</div>
           </div>
           <div>
             <div class="k">To target</div>
@@ -261,7 +268,7 @@ export function PlanCard(props: { plan: PlanState; run: RunView | undefined; pri
             <>
               <div>
                 <div class="k">Plan value</div>
-                <div class="v">{fmtUsd(run.metrics.finalEquity)}</div>
+                <div class="v">{fmtMoney(run.metrics.finalEquity, props.currency)}</div>
               </div>
               <div>
                 <div class="k">Staking earned</div>
@@ -271,7 +278,7 @@ export function PlanCard(props: { plan: PlanState; run: RunView | undefined; pri
           )}
         </div>
         <div class="note">
-          Simulated with your rules from {run ? fmtDate(run.metrics.startTime) : '–'}: buy {fmtUsd(props.buyAmount)} every {props.buyEveryDays === 1 ? 'day' : `${props.buyEveryDays} days`} while the daily close is inside the zone,
+          Simulated with your rules from {run ? fmtDate(run.metrics.startTime) : '–'}: buy {fmtMoney(props.buyAmount, props.currency)} every {props.buyEveryDays === 1 ? 'day' : `${props.buyEveryDays} days`} while the daily close is inside the zone,
           stake at {fmtPct(props.staking, 1, false)} a year, sell at the target. Change the rules in Settings.
         </div>
       </div>
@@ -291,9 +298,11 @@ export function SetupCard(props: { view: ModeView }) {
       <div class="stack">
         {run.open && (
           <div class="banner info">
-            <strong>Open paper trade:</strong> {fmtQty(run.open.qty)} {v.symbol.replace('USDT', '')} at {fmtPrice(run.open.avgPrice)}, now{' '}
-            <span class={run.open.pnl >= 0 ? 'buy' : 'sell'}>{fmtPct(run.open.pnlPct, 2)}</span>
-            {run.open.stop ? `, stop ${fmtPrice(run.open.stop)}` : ''}
+            <strong>Open paper trade:</strong> {fmtQty(run.open.qty)} {v.symbol.replace('USDT', '')} at {fmtUsdt(run.open.avgPrice)}, now{' '}
+            <span class={run.open.pnl >= 0 ? 'buy' : 'sell'}>
+              {fmtPct(run.open.pnlPct, 2)} ({fmtMoney(run.open.pnl, v.currency)})
+            </span>
+            {run.open.stop ? `, stop ${fmtUsdt(run.open.stop)}` : ''}
           </div>
         )}
         <div class="kv">
@@ -379,7 +388,8 @@ export function PerformanceCard(props: { view: ModeView }) {
         <StrategyTable runs={v.runs} primary={v.primary} />
         <LinesChart lines={lines} label="Portfolio value of each strategy over time" small />
         <div class="note">
-          Same start capital and fees for every strategy, {fmtDate(v.simStart)} to now ({v.bars.toLocaleString('en-US')} candles). Returns are after fees
+          Same start capital and fees for every strategy, {fmtDate(v.simStart)} to now ({v.bars.toLocaleString('en-US')} candles).
+          {v.currency !== 'USD' ? ` Values in ${v.currency === 'PHP' ? 'pesos' : v.currency}, converted at each day's exchange rate, so they include the peso's own moves.` : ''} Returns are after fees
           {v.mode === 'long' ? ' and include staking' : ''}. Worst drop = largest fall from a peak.{v.runs[0] && v.runs[0].metrics.days < 90 ? ' Yearly rates are hidden: the window is too short to annualise.' : ''}
         </div>
       </div>
@@ -387,7 +397,7 @@ export function PerformanceCard(props: { view: ModeView }) {
   );
 }
 
-export function TradesCard(props: { run: RunView | undefined; symbol: string }) {
+export function TradesCard(props: { run: RunView | undefined; symbol: string; currency: Money }) {
   const [all, setAll] = useState(false);
   const run = props.run;
   if (!run) return null;
@@ -403,7 +413,7 @@ export function TradesCard(props: { run: RunView | undefined; symbol: string }) 
             <div class="item">
               <div class="main">
                 <div class="title num">
-                  {fmtPrice(t.entryPrice)} → {fmtPrice(t.exitPrice)}
+                  {fmtUsdt(t.entryPrice)} → {fmtUsdt(t.exitPrice)}
                   {t.live && <span class="live-tag">LIVE</span>}
                 </div>
                 <div class="sub">
@@ -412,7 +422,10 @@ export function TradesCard(props: { run: RunView | undefined; symbol: string }) 
               </div>
               <div class={`num ${t.pnl >= 0 ? 'buy' : 'sell'}`} style={{ fontWeight: 700, textAlign: 'right' }}>
                 {fmtPct(t.pnlPct, 2)}
-                <div class="tiny muted">{t.r !== null ? `${fmtNum(t.r, 2)}R` : fmtUsd(t.pnl)}</div>
+                <div class="tiny muted">
+                  {fmtMoney(t.pnl, props.currency, true)}
+                  {t.r !== null ? ` · ${fmtNum(t.r, 2)}R` : ''}
+                </div>
               </div>
             </div>
           ))}

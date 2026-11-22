@@ -46,7 +46,22 @@ async function runJob(client: BinanceClient, job: (typeof jobs)[number]): Promis
   return `${job.symbol} ${job.interval}: ${rows.length} bars (${first} -> ${last}), +${closed.length} new`;
 }
 
+/** Daily USD -> PHP reference rates (ECB, via Frankfurter) for the peso results. */
+async function downloadFx() {
+  const res = await fetch('https://api.frankfurter.dev/v1/2017-08-01..?base=USD&symbols=PHP');
+  if (!res.ok) throw new Error(`exchange rates: HTTP ${res.status}`);
+  const body = await res.json();
+  writeFileSync(new URL('USDPHP.json', DATA_DIR), JSON.stringify(body));
+  return `USD/PHP: ${Object.keys((body as { rates: object }).rates).length} days`;
+}
+
 async function main() {
+  try {
+    console.log(await downloadFx());
+  } catch (e) {
+    console.error('FAILED exchange rates:', e);
+    process.exitCode = 1;
+  }
   const clients = [new BinanceClient({ minIntervalMs: 60 }), new BinanceClient({ minIntervalMs: 60 })];
   let next = 0;
   const t0 = Date.now();

@@ -11,7 +11,8 @@ import { buildConfluence, type Confluence } from '../src/engine/confluence.ts';
 import { LogisticModel, tripleBarrier } from '../src/engine/edge.ts';
 import { computeMetrics, type Metrics } from '../src/engine/metrics.ts';
 import { projectPlan } from '../src/engine/planProjection.ts';
-import { DEFAULT_SETTINGS, MODES } from '../src/engine/presets.ts';
+import { convertResult, parseFrankfurter, rateAt, rateFn } from '../src/engine/fx.ts';
+import { DEFAULT_SETTINGS, MODES, USD_SETTINGS } from '../src/engine/presets.ts';
 import { defaultStartIndex } from '../src/engine/simulate.ts';
 import { allocator } from '../src/engine/strategies/allocator.ts';
 import { dcaPlan } from '../src/engine/strategies/dcaPlan.ts';
@@ -22,7 +23,8 @@ import { parseTf } from '../src/engine/timeframe.ts';
 import type { KlineRow, Series } from '../src/engine/types.ts';
 import { seriesFromRows } from '../src/engine/types.ts';
 
-const S = DEFAULT_SETTINGS;
+// market currency for the main tables; the peso view is in its own section
+const S = USD_SETTINGS;
 const costs = { feeRate: S.feeRate, slippage: S.slippage };
 const dataPath = (f: string) => new URL(`../data/${f}`, import.meta.url);
 function load(symbol: string, interval: string): Series {
@@ -61,7 +63,7 @@ function longTerm() {
   const first = defaultStartIndex(d, 'long', S);
   out('## 1. Long-term on ETH (daily candles, 3% staking on held ETH)');
   out();
-  out(`Data: ${d.t.length} daily ETHUSDT candles, ${day(d.t[0])} to ${day(d.t[d.t.length - 1])}. Start capital $${S.initialCash.toLocaleString('en-US')}, fee ${(S.feeRate * 100).toFixed(2)}% per fill, slippage ${(S.slippage * 100).toFixed(2)}%.`);
+  out(`Data: ${d.t.length} daily ETHUSDT candles, ${day(d.t[0])} to ${day(d.t[d.t.length - 1])}. Start capital $${S.initialCash.toLocaleString('en-US')}, buys of $${S.plan.buyAmount} a week, fee ${(S.feeRate * 100).toFixed(2)}% per fill, slippage ${(S.slippage * 100).toFixed(2)}%. Sections 1-4 are in US dollars (the market's currency); section 5 shows the same plan in pesos.`);
   out('In-sample = 2018-2022 (used when choosing defaults), out-of-sample = 2023 to now (never used for choices).');
   out();
   const periods: [string, number, number][] = [
@@ -214,6 +216,45 @@ function projection() {
   out();
 }
 
+function pesos() {
+  const p = dataPath('USDPHP.json');
+  if (!existsSync(p)) {
+    out('## 5. Your plan in Philippine pesos');
+    out();
+    out('Skipped: data/USDPHP.json is missing (run research/download.ts).');
+    return;
+  }
+  const fx = parseFrankfurter(JSON.parse(readFileSync(p, 'utf8')), 'PHP');
+  const rate = rateFn(fx);
+  const P = DEFAULT_SETTINGS; // pesos: P500,000 start, P25,000 weekly buys
+  const d = load('ETHUSDT', '1d');
+  const cf = buildConfluence(d, LONG_TFS);
+  const first = defaultStartIndex(d, 'long', P);
+  const runP = (strat: Strategy, a: number, b: number) =>
+    computeMetrics(convertResult(runBacktest(d, strat, { initialCash: P.initialCash / rate(d.t[a]), costs, startIndex: a, endIndex: b, stakingApr: P.ethStakingApr }), rate));
+  out('## 5. Your plan in Philippine pesos');
+  out();
+  out(`Start ₱${P.initialCash.toLocaleString('en-US')}, buys of ₱${P.plan.buyAmount.toLocaleString('en-US')} converted at each day's USD/PHP reference rate (European Central Bank via Frankfurter). The peso went from ₱${rateAt(fx, d.t[first]).toFixed(2)} per $1 on ${day(d.t[first])} to ₱${rateAt(fx, d.t[d.t.length - 1]).toFixed(2)} on ${day(d.t[d.t.length - 1])}, so peso returns are higher than dollar returns.`);
+  out();
+  for (const [label, a, b] of [['Out-of-sample 2023-01-01 to now', idx(d, '2023-01-01'), d.t.length], [`Full ${day(d.t[first])} to now`, first, d.t.length]] as [string, number, number][]) {
+    out(`### ${label} (in pesos)`);
+    out();
+    out('| Strategy | Return | Per year | Worst drop | Final value |');
+    out('|---|---:|---:|---:|---:|');
+    const rows: [string, Strategy][] = [
+      ['Buy & hold + staking', hodl()],
+      ['**My plan** (DCA $1500-1700, sell $4000)', dcaPlan(P.plan, undefined, rate)],
+      ['Plan + confluence timing', planPlus(cf, P.plan, P.planPlus, undefined, rate)],
+      ['Confluence allocator', allocator(cf, P.allocator)],
+    ];
+    for (const [name, strat] of rows) {
+      const m = runP(strat, a, b);
+      out(`| ${name} | ${pct(m.totalReturn)} | ${pct(m.cagr)} | ${pct(m.maxDrawdown, 0)} | ₱${Math.round(m.finalEquity).toLocaleString('en-US')} |`);
+    }
+    out();
+  }
+}
+
 const t0 = Date.now();
 out('# Research results');
 out();
@@ -223,6 +264,7 @@ longTerm();
 otherCoins();
 shortTerm();
 projection();
+pesos();
 console.error(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 mkdirSync(new URL('../docs/', import.meta.url), { recursive: true });
 writeFileSync(new URL('../docs/RESEARCH.md', import.meta.url), md.join('\n') + '\n');

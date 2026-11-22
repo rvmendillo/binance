@@ -1,3 +1,4 @@
+import type { FxSeries } from '../engine/fx.ts';
 import type { ModeId, Settings } from '../engine/presets.ts';
 import type { PlanProjection } from '../engine/planProjection.ts';
 import type { KlineRow } from '../engine/types.ts';
@@ -12,6 +13,8 @@ export interface SimulateRequest {
   settings: Settings;
   /** Trades/fills at or after this time are flagged as live paper trades. */
   liveSince: number;
+  /** Daily USD -> account-currency rates (null when the account currency is USD). */
+  fx: FxSeries | null;
 }
 
 export interface ProjectPlanRequest {
@@ -23,6 +26,7 @@ export interface ProjectPlanRequest {
   demean: boolean;
   /** Only history from this time on is resampled for the synthetic futures. */
   bootstrapFrom: number;
+  fx: FxSeries | null;
 }
 
 export type EngineRequest = SimulateRequest | ProjectPlanRequest;

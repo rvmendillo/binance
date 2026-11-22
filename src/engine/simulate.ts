@@ -6,6 +6,7 @@
  */
 import { runBacktest, type BacktestResult, type Strategy } from './backtest.ts';
 import { buildConfluence, snapshotAt, type Confluence, type ConfluenceSnapshot } from './confluence.ts';
+import { convertResult, rateFn, type Currency, type FxSeries } from './fx.ts';
 import { computeMetrics, type Metrics } from './metrics.ts';
 import { MODES, tfsFor, type ModeId, type Settings } from './presets.ts';
 import { allocator, allocatorTarget, type AllocatorState } from './strategies/allocator.ts';
@@ -32,7 +33,11 @@ export interface StrategyRun {
   id: StrategyId;
   name: string;
   about: string;
+  /** The run in the account currency (money converted at each day's rate). */
   result: BacktestResult;
+  /** The same run in USDT, as simulated against Binance prices. */
+  raw: BacktestResult;
+  /** Metrics in the account currency. */
   metrics: Metrics;
 }
 
@@ -54,8 +59,12 @@ export interface PlanState {
   toTargetPct: number;
   nextBuyInDays: number;
   qty: number;
+  /** Cash in the account currency. */
   cash: number;
+  /** Average cost per ETH as a USDT price (fees included). */
   avgCost: number | null;
+  /** Average cost per ETH in the account currency, at the rates of the buy days. */
+  avgCostLocal: number | null;
 }
 
 export interface ModeResult {
@@ -75,7 +84,11 @@ export interface ModeResult {
   plan?: PlanState;
   allocatorState?: AllocatorState | null;
   lastClosedTime: number;
+  /** Last close in USDT. */
   price: number;
+  currency: Currency;
+  /** Account currency per 1 USDT on the last candle's day. */
+  fxNow: number;
 }
 
 export function isEthSymbol(symbol: string): boolean {
@@ -112,22 +125,34 @@ export function defaultStartIndex(series: Series, mode: ModeId, settings: Settin
   return simStartIndex(series, MODES[mode].simDays, 120);
 }
 
-export function simulate(symbol: string, mode: ModeId, series: Series, settings: Settings, opts: { startIndex?: number } = {}): ModeResult {
+export function simulate(
+  symbol: string,
+  mode: ModeId,
+  series: Series,
+  settings: Settings,
+  opts: { startIndex?: number; fx?: FxSeries | null } = {},
+): ModeResult {
   const preset = MODES[mode];
   const isEth = isEthSymbol(symbol);
   if (series.t.length < 30) throw new Error('Not enough candles to simulate yet');
+  const currency = settings.currency;
+  if (currency !== 'USD' && (!opts.fx || opts.fx.currency !== currency)) throw new Error(`Exchange rates for ${currency} are not loaded`);
+  const rate = rateFn(currency === 'USD' ? null : opts.fx);
   const cf = buildConfluence(series, { baseTf: preset.baseTf, tfs: tfsFor(mode, settings) });
   const n = series.t.length;
   const last = n - 1;
   const startIndex = opts.startIndex ?? defaultStartIndex(series, mode, settings);
   const costs = { feeRate: settings.feeRate, slippage: settings.slippage };
   const stakeApr = isEth ? settings.ethStakingApr : settings.otherStakingApr;
-  const base = { initialCash: settings.initialCash, costs, startIndex };
+  // the starting capital is converted to USDT at the rate of the first simulated day
+  const base = { initialCash: settings.initialCash / rate(series.t[startIndex]), costs, startIndex };
   const runs: StrategyRun[] = [];
   const add = (id: StrategyId, strat: Strategy, stake: number) => {
-    const result = runBacktest(series, strat, { ...base, stakingApr: stake });
-    runs.push({ id, ...STRATEGY_INFO[id], result, metrics: computeMetrics(result) });
+    const raw = runBacktest(series, strat, { ...base, stakingApr: stake });
+    const result = convertResult(raw, rate);
+    runs.push({ id, ...STRATEGY_INFO[id], result, raw, metrics: computeMetrics(result) });
   };
+  const fxNow = rate(series.t[last]);
   const snapshot = snapshotAt(cf, last);
   const price = series.c[last];
   let decision: Decision;
@@ -139,15 +164,16 @@ export function simulate(symbol: string, mode: ModeId, series: Series, settings:
 
   if (mode === 'long') {
     if (isEth) {
-      add('plan', dcaPlan(settings.plan), stakeApr);
-      add('planPlus', planPlus(cf, settings.plan, settings.planPlus), stakeApr);
+      add('plan', dcaPlan(settings.plan, undefined, rate), stakeApr);
+      add('planPlus', planPlus(cf, settings.plan, settings.planPlus, undefined, rate), stakeApr);
     }
     add('allocator', allocator(cf, settings.allocator), stakeApr);
     add('hodl', hodl(), stakeApr);
     allocatorState = allocatorTarget(cf, sma(series.c, settings.allocator.valSma), last, settings.allocator);
     if (isEth) {
       primary = 'plan';
-      const pr = runs[0].result;
+      const pr = runs[0].raw;
+      const prLocal = runs[0].result;
       const p = settings.plan;
       const target = Math.min(...p.takeProfit.map((l) => l.price));
       const inZone = price >= p.zoneLow && price <= p.zoneHigh;
@@ -158,24 +184,27 @@ export function simulate(symbol: string, mode: ModeId, series: Series, settings:
       // decision is at the close of the next scheduled day
       const nextBuyInDays = dayNow % p.buyEveryDays === 0 ? 0 : p.buyEveryDays - (dayNow % p.buyEveryDays);
       const open = pr.openTrade;
+      const openLocal = prLocal.openTrade;
       plan = {
         inZone, belowZone, aboveTarget: price >= target, zoneLow: p.zoneLow, zoneHigh: p.zoneHigh, target,
-        toTargetPct: target / price - 1, nextBuyInDays, qty: pr.final.qty, cash: pr.final.cash,
+        toTargetPct: target / price - 1, nextBuyInDays, qty: pr.final.qty, cash: prLocal.final.cash,
         avgCost: open && open.qtyBought > 0 ? open.cost / open.qtyBought : null,
+        avgCostLocal: openLocal && openLocal.qtyBought > 0 ? openLocal.cost / openLocal.qtyBought : null,
       };
+      const usd = (x: number) => '$' + x.toLocaleString('en-US');
       const reasons: string[] = [];
       let action: Action;
       let headline: string;
       if (plan.qty > 0 && price >= target) {
         action = 'SELL';
-        headline = `Price is at your ${target.toLocaleString('en-US')} target: your plan sells.`;
+        headline = `Price is at your ${usd(target)} target: your plan sells.`;
       } else if ((inZone || (belowZone && p.buyBelowZone)) && plan.cash > 0) {
         action = 'BUY';
-        headline = `Price is inside your buy zone (${p.zoneLow.toLocaleString('en-US')}-${p.zoneHigh.toLocaleString('en-US')}): your plan keeps buying.`;
+        headline = `Price is inside your buy zone (${usd(p.zoneLow)}-${p.zoneHigh.toLocaleString('en-US')}): your plan keeps buying.`;
         reasons.push(nextBuyInDays === 0 ? 'A scheduled buy fills at the next daily open (00:00 UTC).' : `Next scheduled buy check in ${nextBuyInDays} day${nextBuyInDays > 1 ? 's' : ''} (if price is still in the zone).`);
       } else if (plan.qty > 0) {
         action = 'HOLD';
-        headline = `Holding and staking. ${(plan.toTargetPct * 100).toFixed(0)}% to go to your ${target.toLocaleString('en-US')} target.`;
+        headline = `Holding and staking. ${(plan.toTargetPct * 100).toFixed(0)}% to go to your ${usd(target)} target.`;
       } else {
         action = 'WAIT';
         headline = belowZone ? 'Price is below your buy zone. Your plan waits (buying below the zone is off).' : 'Price is above your buy zone. Your plan waits in cash.';
@@ -188,7 +217,7 @@ export function simulate(symbol: string, mode: ModeId, series: Series, settings:
       decision = { action, headline, reasons };
     } else {
       primary = 'allocator';
-      const ar = runs[0].result;
+      const ar = runs[0].raw;
       const curAlloc = ar.final.equity > 0 ? (ar.final.qty * price) / ar.final.equity : 0;
       const tgt = allocatorState?.target ?? curAlloc;
       const action: Action = tgt > curAlloc + 0.05 ? 'BUY' : tgt < curAlloc - 0.05 ? 'SELL' : curAlloc > 0.05 ? 'HOLD' : 'WAIT';
@@ -209,7 +238,7 @@ export function simulate(symbol: string, mode: ModeId, series: Series, settings:
     primary = 'trader';
     signal = tr.diag.lastSignal ?? undefined;
     traderDiag = tr.diag;
-    const r = runs[0].result;
+    const r = runs[0].raw;
     const reasons = [describeConfluence(snapshot)];
     let action: Action;
     let headline: string;
@@ -237,6 +266,6 @@ export function simulate(symbol: string, mode: ModeId, series: Series, settings:
 
   return {
     symbol, mode, isEth, series, startIndex, confluence: cf, snapshot, runs, primary, decision, signal, traderDiag, plan, allocatorState,
-    lastClosedTime: series.t[last], price,
+    lastClosedTime: series.t[last], price, currency, fxNow,
   };
 }

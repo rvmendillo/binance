@@ -4,6 +4,8 @@ An iPhone app (IPA) that simulates trading Ethereum and other coins with Binance
 
 It is a **simulator**. It never places orders and needs **no Binance API key**.
 
+**Money is in Philippine pesos (₱).** Capital, buys, cash, portfolio values, profits, fees and projections are all in pesos. Each amount is converted at that day's USD→PHP reference rate (European Central Bank, via Frankfurter), so peso results include the peso's own moves. ETH and coin **prices stay in USDT**, exactly as Binance quotes them; your zone ($1,500-1,700) and target ($4,000) are ETH prices in dollars, and the app shows their peso equivalents. You can switch to US dollars in Settings.
+
 ## What you get
 
 | Tab | What it shows |
@@ -11,10 +13,10 @@ It is a **simulator**. It never places orders and needs **no Binance API key**.
 | **ETH** | Four trading styles: **Long-term** (daily candles), **Swing** (1h), **Day trade** (15m), **Scalp** (1m). Each style shows a decision (BUY / SELL / HOLD / WAIT) with its reasons, a price chart with every simulated buy and sell, the confluence matrix, a backtest of every strategy over the same window, and the trade log. |
 | **Coins** | The same engine for BTC, SOL, BNB, XRP, DOGE, ADA, LINK, AVAX, TRX and SUI (editable), with live prices and the current decision per coin. |
 | **Projection** | Your plan run forward into 300 simulated futures: the chance ETH reaches your target within 3 months to 3 years, and the range of your portfolio value. Each strategy's earnings rate is also compounded forward, with Monte Carlo ranges. |
-| **Settings** | Your plan (zone, buy size and interval, targets, deposits), fees (0.1%, or 0.075% with BNB), slippage, staking yield, risk per trade, edge-filter strictness, custom timeframes per style, and the coin list. |
+| **Settings** | Currency (pesos or dollars), your plan (zone, buy size and interval, targets, deposits), fees (0.1%, or 0.075% with BNB), slippage, staking yield, risk per trade, edge-filter strictness, custom timeframes per style, and the coin list. |
 
 ### Your plan, exactly as you run it
-The long-term ETH view simulates **your rules**: buy a fixed amount on a schedule (default $500 a week) only while the daily close is inside **1,500-1,700**, keep the ETH **staked** (default 3% a year), and sell at **4,000+**, then repeat. Your buy zone and target are drawn on the price chart. The plan card shows your simulated holdings, average cost, cash waiting, staking earned and distance to target.
+The long-term ETH view simulates **your rules**: buy a fixed amount on a schedule (default ₱25,000 a week from ₱500,000) only while the daily close is inside **$1,500-1,700**, keep the ETH **staked** (default 3% a year), and sell at **$4,000+**, then repeat. Your buy zone and target are drawn on the price chart. The plan card shows your simulated holdings, average cost, cash waiting, staking earned and distance to target.
 
 ### "Convergence on all timeframes"
 For every timeframe in a style, including custom ones Binance does not offer (2m, 10m, 45m, 2d, 5d, 2w, or any you type in), the app runs 15 algorithms in three families:
@@ -36,7 +38,9 @@ Risk is capped at 1% of equity per trade with an ATR stop, plus a daily loss lim
 
 ## What the simulations found
 
-Full tables: [docs/RESEARCH.md](docs/RESEARCH.md). Regenerate them with `node research/run-research.ts`. Results are after 0.1% fees and 0.05% slippage per fill, from $10,000.
+Full tables: [docs/RESEARCH.md](docs/RESEARCH.md). Regenerate them with `node research/run-research.ts`. Results are after 0.1% fees and 0.05% slippage per fill. The tables below are in US dollars (from $10,000, $500 a week), the market's currency.
+
+**In pesos** (from ₱500,000, ₱25,000 a week, real daily USD/PHP rates), your plan returned **+199% since 2023** with a -15% worst drop, and +277% since 2018 (-18% worst drop). Peso returns are higher than dollar returns because the peso fell from ₱52.20 to ₱63.78 per dollar over the period.
 
 **Long-term ETH** (2018-2022 was used to choose defaults; 2023 to now was never used for any choice):
 
@@ -122,8 +126,8 @@ Live paper trading: when a candle closes on Binance's WebSocket, the same simula
 
 | Check | What it proves |
 |---|---|
-| `npm test`: 112 unit and property tests | Indicators match TA-Lib on real ETH data. Custom aggregation reproduces Binance's own 1h/4h/1d/3d/1w/1M candles. Cutting the data at any point never changes earlier decisions (no look-ahead). Cash, coins, fees and P&L reconcile in 200 randomized runs. The Binance client falls back across hosts, respects rate limits and never duplicates candles; a wrong phone clock cannot corrupt candles; the live feed batches subscriptions and recovers from drops. Your plan reproduces its three real sells at 4,000. The trader profits when an edge truly exists and stays out on random walks. Projections behave as expected. |
-| `npm run e2e`: 10 browser tests (iPhone viewport, mocked Binance) | Live candles change the decision. Settings re-run the simulation. Custom timeframes are validated. Every style renders. The app falls back to polling. Errors are explained. The WebSocket rate limit is respected. No sideways scrolling at 320 px. |
+| `npm test`: 127 unit and property tests | Indicators match TA-Lib on real ETH data. Custom aggregation reproduces Binance's own 1h/4h/1d/3d/1w/1M candles. Cutting the data at any point never changes earlier decisions (no look-ahead). Cash, coins, fees and P&L reconcile in 200 randomized runs. The Binance client falls back across hosts, respects rate limits and never duplicates candles; a wrong phone clock cannot corrupt candles; the live feed batches subscriptions and recovers from drops. Your plan reproduces its three real sells at 4,000. Peso amounts convert at each day's real exchange rate (buy & hold in pesos equals the dollar return times the USD/PHP move, to 6 decimals). The trader profits when an edge truly exists and stays out on random walks. Projections behave as expected. |
+| `npm run e2e`: 13 browser tests (iPhone viewport, mocked Binance and exchange rates) | Live candles change the decision. Settings re-run the simulation. Custom timeframes are validated. Every style renders. The app falls back to polling. Errors are explained. The WebSocket rate limit is respected. No sideways scrolling at 320 px. Money shows in pesos by default, switches to dollars, and the app refuses to show amounts when exchange rates cannot load. |
 | GitHub Actions | Runs all of the above, builds the unsigned IPA, and launches it in the iOS simulator with live data. |
 
 ```sh

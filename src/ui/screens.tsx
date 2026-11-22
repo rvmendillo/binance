@@ -6,7 +6,7 @@ import type { ModeView } from '../worker/viewModel.ts';
 import { LinesChart, PriceChart, resolveColor, SERIES_COLORS, type PriceLine } from './charts.tsx';
 import { ChangeChip, ConfluenceCard, DecisionCard, Icon, ModePicker, PerformanceCard, PlanCard, Progress, Segmented, SetupCard, TradesCard } from './components.tsx';
 import type { Controller } from './controller.ts';
-import { baseSymbol, fmtAgo, fmtDate, fmtDays, fmtPct, fmtPrice, fmtUsd, fmtYears } from './format.ts';
+import { baseSymbol, fmtAgo, fmtDate, fmtDays, fmtMoney, fmtMoneyPrice, fmtPct, fmtPrice, fmtUsdt, fmtYears, type Money } from './format.ts';
 
 export function useController(c: Controller) {
   const [, setV] = useState(0);
@@ -65,7 +65,18 @@ function ModeContent(props: { c: Controller; view: ModeView; computing: boolean;
     <div class="stack">
       {props.error && <div class="banner error">{props.error}</div>}
       <DecisionCard view={view} />
-      {view.plan && <PlanCard plan={view.plan} run={primaryRun} price={view.price} staking={c.settings.ethStakingApr} buyAmount={c.settings.plan.buyAmount} buyEveryDays={c.settings.plan.buyEveryDays} />}
+      {view.plan && (
+        <PlanCard
+          plan={view.plan}
+          run={primaryRun}
+          price={view.price}
+          staking={c.settings.ethStakingApr}
+          buyAmount={c.settings.plan.buyAmount}
+          buyEveryDays={c.settings.plan.buyEveryDays}
+          currency={view.currency}
+          fx={view.fxNow}
+        />
+      )}
       {view.mode !== 'long' && <SetupCard view={view} />}
       <section class="card">
         <div class="row between" style={{ marginBottom: '8px' }}>
@@ -82,9 +93,11 @@ function ModeContent(props: { c: Controller; view: ModeView; computing: boolean;
       </section>
       <ConfluenceCard view={view} />
       <PerformanceCard view={view} />
-      <TradesCard run={primaryRun} symbol={view.symbol} />
+      <TradesCard run={primaryRun} symbol={view.symbol} currency={view.currency} />
       <div class="footer-note">
-        Simulation only, no real orders. Market data: Binance public API. Fees {fmtPct(c.settings.feeRate, 3, false)} per fill, slippage {fmtPct(c.settings.slippage, 2, false)}. Computed in {view.computeMs} ms.
+        Simulation only, no real orders. Market data: Binance public API (prices in USDT).
+        {view.currency !== 'USD' ? ` Money in pesos at each day's USD to PHP reference rate (European Central Bank, via Frankfurter); latest ${fmtMoney(view.fxNow, view.currency)} per $1.` : ''} Fees{' '}
+        {fmtPct(c.settings.feeRate, 3, false)} per fill, slippage {fmtPct(c.settings.slippage, 2, false)}. Computed in {view.computeMs} ms.
       </div>
     </div>
   );
@@ -96,6 +109,8 @@ export function AssetScreen(props: { c: Controller; symbol: string; mode: ModeId
   const t = c.tickers.get(symbol);
   const view = c.view(symbol, mode);
   const price = t?.price ?? c.forming(symbol, mode)?.c ?? view?.price;
+  const cur = c.settings.currency;
+  const rate = c.currentRate();
   return (
     <div class="stack">
       {props.onBack && (
@@ -106,7 +121,14 @@ export function AssetScreen(props: { c: Controller; symbol: string; mode: ModeId
       <div class="pricehead">
         <div>
           <div class="sym">{baseSymbol(symbol)} / USDT</div>
-          <div class="px" aria-live="polite">{price !== undefined ? fmtPrice(price) : '–'}</div>
+          <div class="px" aria-live="polite">
+            {price === undefined ? '–' : cur === 'USD' ? fmtPrice(price) : Number.isFinite(rate) ? fmtMoneyPrice(price * rate, cur) : fmtUsdt(price)}
+          </div>
+          {cur !== 'USD' && price !== undefined && (
+            <div class="tiny muted num">
+              {fmtUsdt(price)} on Binance{Number.isFinite(rate) ? ` · ${fmtMoney(rate, cur)} per $1` : ''}
+            </div>
+          )}
         </div>
         <div style={{ textAlign: 'right' }}>
           <ChangeChip pct={t?.changePct} />
@@ -124,6 +146,8 @@ export function CoinsScreen(props: { c: Controller }) {
   const { c } = props;
   const coins = c.settings.coins;
   const mode = c.ui.coinsMode;
+  const cur = c.settings.currency;
+  const rate = c.currentRate();
   useEffect(() => c.watchTickers(coins), [coins.join(',')]);
   // work through the list one coin at a time so the phone stays responsive
   useEffect(() => {
@@ -174,7 +198,7 @@ export function CoinsScreen(props: { c: Controller }) {
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div class="num" style={{ fontWeight: 650 }}>{t ? fmtPrice(t.price) : '–'}</div>
+                  <div class="num" style={{ fontWeight: 650 }}>{!t ? '–' : cur !== 'USD' && Number.isFinite(rate) ? fmtMoneyPrice(t.price * rate, cur) : fmtUsdt(t.price)}</div>
                   <ChangeChip pct={t?.changePct} />
                 </div>
                 <span class={`pill ${v?.decision.action ?? 'WAIT'}`} style={{ minWidth: '56px', fontSize: '12px', padding: '6px 6px' }}>
@@ -190,10 +214,10 @@ export function CoinsScreen(props: { c: Controller }) {
   );
 }
 
-function BandBar(props: { lo: number; q1: number; med: number; q3: number; hi: number; now: number; min: number; max: number; color: string }) {
+function BandBar(props: { lo: number; q1: number; med: number; q3: number; hi: number; now: number; min: number; max: number; color: string; cur: Money }) {
   const x = (v: number) => `${Math.min(100, Math.max(0, ((v - props.min) / (props.max - props.min || 1)) * 100))}%`;
   return (
-    <div class="band" role="img" aria-label={`Range ${fmtUsd(props.lo)} to ${fmtUsd(props.hi)}, middle ${fmtUsd(props.med)}`}>
+    <div class="band" role="img" aria-label={`Range ${fmtMoney(props.lo, props.cur)} to ${fmtMoney(props.hi, props.cur)}, middle ${fmtMoney(props.med, props.cur)}`}>
       <div class="wide" style={{ left: x(props.lo), width: `calc(${x(props.hi)} - ${x(props.lo)})`, background: props.color }} />
       <div class="iqr" style={{ left: x(props.q1), width: `calc(${x(props.q3)} - ${x(props.q1)})`, background: props.color }} />
       <div class="med" style={{ left: x(props.med) }} />
@@ -241,6 +265,7 @@ export function ProjectionScreen(props: { c: Controller }) {
     };
   }, [pj]);
 
+  const pcur = (pj?.currency ?? c.settings.currency) as Money;
   const all = pj ? [pj.planValue.p10, pj.hodlValue.p10, pj.planValue.p90, pj.hodlValue.p90, pj.planNow] : [0, 1];
   const min = Math.min(...all);
   const max = Math.max(...all);
@@ -263,13 +288,14 @@ export function ProjectionScreen(props: { c: Controller }) {
           {pj && (
             <>
               <div class="note">
-                {pj.paths} futures built from random 30-day blocks of real ETH history, each continuing your plan from today's state ({fmtUsd(pj.planNow)}).{' '}
+                {pj.paths} futures built from random 30-day blocks of real ETH history, each continuing your plan from today's state ({fmtMoney(pj.planNow, pcur)}).{' '}
                 {drift === 'zero' ? 'The average trend is removed, so only the volatility is kept.' : 'The historical average trend is kept.'}
+                {pcur !== 'USD' ? ` Future peso amounts use today's rate of ${fmtMoney(pj.fxNow, pcur)} per $1.` : ''}
                 {busy ? ' Updating…' : ''}
               </div>
               <div>
                 <div class="small" style={{ fontWeight: 650, marginBottom: '8px' }}>
-                  Chance ETH reaches your {fmtPrice(pj.target)} target
+                  Chance ETH reaches your ${pj.target.toLocaleString('en-US')} target price
                 </div>
                 <div class="probs">
                   {pj.hitBy.map((h) => (
@@ -293,19 +319,19 @@ export function ProjectionScreen(props: { c: Controller }) {
                   <div class="row between small">
                     <span>Your plan</span>
                     <span class="num">
-                      {fmtUsd(pj.planValue.p10)} – <strong>{fmtUsd(pj.planValue.p50)}</strong> – {fmtUsd(pj.planValue.p90)}
+                      {fmtMoney(pj.planValue.p10, pcur, true)} – <strong>{fmtMoney(pj.planValue.p50, pcur, true)}</strong> – {fmtMoney(pj.planValue.p90, pcur, true)}
                     </span>
                   </div>
-                  <BandBar lo={pj.planValue.p10} q1={pj.planValue.p25} med={pj.planValue.p50} q3={pj.planValue.p75} hi={pj.planValue.p90} now={pj.planNow} min={min} max={max} color="var(--accent)" />
+                  <BandBar lo={pj.planValue.p10} q1={pj.planValue.p25} med={pj.planValue.p50} q3={pj.planValue.p75} hi={pj.planValue.p90} now={pj.planNow} min={min} max={max} color="var(--accent)" cur={pcur} />
                 </div>
                 <div class="bandrow">
                   <div class="row between small">
                     <span>All in ETH today, staked</span>
                     <span class="num">
-                      {fmtUsd(pj.hodlValue.p10)} – <strong>{fmtUsd(pj.hodlValue.p50)}</strong> – {fmtUsd(pj.hodlValue.p90)}
+                      {fmtMoney(pj.hodlValue.p10, pcur, true)} – <strong>{fmtMoney(pj.hodlValue.p50, pcur, true)}</strong> – {fmtMoney(pj.hodlValue.p90, pcur, true)}
                     </span>
                   </div>
-                  <BandBar lo={pj.hodlValue.p10} q1={pj.hodlValue.p25} med={pj.hodlValue.p50} q3={pj.hodlValue.p75} hi={pj.hodlValue.p90} now={pj.planNow} min={min} max={max} color="var(--hold)" />
+                  <BandBar lo={pj.hodlValue.p10} q1={pj.hodlValue.p25} med={pj.hodlValue.p50} q3={pj.hodlValue.p75} hi={pj.hodlValue.p90} now={pj.planNow} min={min} max={max} color="var(--hold)" cur={pcur} />
                 </div>
                 <div class="note">
                   Bars: 10th to 90th percentile, thicker part 25th to 75th, black tick the median, dashed line today's value. Plan ends higher than today in {fmtPct(pj.planProbGain, 0, false)} of futures
@@ -313,7 +339,7 @@ export function ProjectionScreen(props: { c: Controller }) {
                 </div>
               </div>
               <div class="divider" />
-              <div class="small" style={{ fontWeight: 650 }}>ETH price paths (10th, 50th, 90th percentile)</div>
+              <div class="small" style={{ fontWeight: 650 }}>ETH price paths in USDT (10th, 50th, 90th percentile)</div>
               {fan && <LinesChart lines={fan.lines} area={fan.area} label="Projected ETH price range" small />}
             </>
           )}
@@ -364,9 +390,9 @@ function GrowthCard(props: { view: ModeView }) {
                   </td>
                   <td>{fmtPct(r.projection.cagr, 1)}</td>
                   <td>{fmtYears(r.projection.yearsToDouble)}</td>
-                  <td>{fmtUsd(r.projection.compound[0].value, true)}</td>
-                  <td>{fmtUsd(r.projection.compound[2].value, true)}</td>
-                  <td>{b3 ? `${fmtUsd(b3.p5, true)} – ${fmtUsd(b3.p95, true)}` : '–'}</td>
+                  <td>{fmtMoney(r.projection.compound[0].value, v.currency, true)}</td>
+                  <td>{fmtMoney(r.projection.compound[2].value, v.currency, true)}</td>
+                  <td>{b3 ? `${fmtMoney(b3.p5, v.currency, true)} – ${fmtMoney(b3.p95, v.currency, true)}` : '–'}</td>
                 </tr>
               );
             })}

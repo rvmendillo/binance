@@ -1,12 +1,16 @@
 import { useState } from 'preact/hooks';
 import { clearCandles } from '../data/cache.ts';
+import type { Currency } from '../engine/fx.ts';
 import { MODE_ORDER, MODES, type ModeId, type Settings } from '../engine/presets.ts';
 import { validateDcaPlan, type TakeProfitLevel } from '../engine/strategies/dcaPlan.ts';
 import { isCompatible, parseTf } from '../engine/timeframe.ts';
+import { Segmented } from './components.tsx';
 import type { Controller } from './controller.ts';
+import { fmtMoney, moneySymbol } from './format.ts';
 
 /** Text fields hold strings while editing; they are parsed and checked on Apply. */
 interface Draft {
+  currency: Currency;
   initialCash: string;
   feeRate: string;
   slippage: string;
@@ -35,6 +39,7 @@ const pctStr = (x: number) => String(+(x * 100).toFixed(4));
 
 function toDraft(s: Settings): Draft {
   return {
+    currency: s.currency,
     initialCash: String(s.initialCash),
     feeRate: pctStr(s.feeRate),
     slippage: pctStr(s.slippage),
@@ -77,12 +82,12 @@ export function fromDraft(d: Draft, base: Settings): { settings?: Settings; erro
   const plan = {
     zoneLow: num(d.zoneLow, 'Buy zone low', 0.0001, 1e9),
     zoneHigh: num(d.zoneHigh, 'Buy zone high', 0.0001, 1e9),
-    buyAmount: num(d.buyAmount, 'Buy amount', 1, 1e9),
+    buyAmount: num(d.buyAmount, 'Buy amount', 1, 1e12),
     buyEveryDays: num(d.buyEveryDays, 'Buy interval', 1, 365),
     buyBelowZone: d.buyBelowZone,
     repeat: d.repeat,
     takeProfit: targets,
-    contribution: { amount: num(d.depositAmount, 'Deposit amount', 0, 1e9), everyDays: num(d.depositEvery, 'Deposit interval', 1, 365) },
+    contribution: { amount: num(d.depositAmount, 'Deposit amount', 0, 1e12), everyDays: num(d.depositEvery, 'Deposit interval', 1, 365) },
   };
   if (!errors.length) errors.push(...validateDcaPlan(plan));
   const customTfs: Partial<Record<ModeId, string[]>> = {};
@@ -112,7 +117,8 @@ export function fromDraft(d: Draft, base: Settings): { settings?: Settings; erro
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.longStart) || Number.isNaN(Date.parse(d.longStart))) errors.push('Long-term start must be a date.');
   const settings: Settings = {
     ...base,
-    initialCash: num(d.initialCash, 'Starting capital', 100, 1e9),
+    currency: d.currency,
+    initialCash: num(d.initialCash, 'Starting capital', 100, 1e12),
     feeRate: num(d.feeRate, 'Fee', 0, 1) / 100,
     slippage: num(d.slippage, 'Slippage', 0, 1) / 100,
     ethStakingApr: num(d.ethStakingApr, 'ETH staking yield', 0, 50) / 100,
@@ -169,6 +175,31 @@ export function SettingsScreen(props: { c: Controller }) {
     setD({ ...d, [k]: v });
     setSaved('');
   };
+  const [convNote, setConvNote] = useState('');
+  /** Switch the money currency and convert the typed amounts at the latest rate. */
+  const changeCurrency = async (next: Currency) => {
+    if (next === d.currency) return;
+    const from = d.currency;
+    setD({ ...d, currency: next });
+    setSaved('');
+    try {
+      const rFrom = await c.rateFor(from);
+      const rTo = await c.rateFor(next);
+      const k = rTo / rFrom;
+      const conv = (v: string) => {
+        const x = Number(v.replace(/[, ₱$]/g, ''));
+        if (!Number.isFinite(x) || x === 0) return v;
+        const y = x * k;
+        const step = y >= 100_000 ? 1000 : y >= 10_000 ? 100 : y >= 1000 ? 10 : 1;
+        return String(Math.round(y / step) * step);
+      };
+      setD((cur) => ({ ...cur, currency: next, initialCash: conv(cur.initialCash), buyAmount: conv(cur.buyAmount), depositAmount: conv(cur.depositAmount) }));
+      setConvNote(`Amounts converted at ${fmtMoney(next === 'USD' ? rFrom : rTo, next === 'USD' ? from : next)} per $1. Press Apply to use them.`);
+    } catch {
+      setConvNote('Could not load the exchange rate, so the amounts were not converted. Check them before applying.');
+    }
+  };
+  const sym = moneySymbol(d.currency);
   const apply = () => {
     const r = fromDraft(d, c.settings);
     setErrors(r.errors);
@@ -192,7 +223,21 @@ export function SettingsScreen(props: { c: Controller }) {
       <section class="card">
         <h2>Account</h2>
         <div class="form">
-          <Field id="cash" label="Starting capital" suffix="USDT" value={d.initialCash} onInput={(v) => set('initialCash', v)} />
+          <div class="field">
+            <label id="cur-label">Currency for money</label>
+            <Segmented
+              label="Currency for money"
+              value={d.currency}
+              onChange={(v) => void changeCurrency(v)}
+              options={[
+                { id: 'PHP', label: 'Philippine peso ₱' },
+                { id: 'USD', label: 'US dollar $' },
+              ]}
+            />
+            <div class="hint">Capital, buys, values and profits use this currency at each day's exchange rate. ETH prices and your zone stay in USDT, as on Binance.</div>
+            {convNote && <div class="hint" role="status">{convNote}</div>}
+          </div>
+          <Field id="cash" label="Starting capital" suffix={sym} value={d.initialCash} onInput={(v) => set('initialCash', v)} />
           <div class="pair">
             <Field id="fee" label="Fee per fill" suffix="%" value={d.feeRate} onInput={(v) => set('feeRate', v)} hint="Binance spot 0.1, or 0.075 paying with BNB" />
             <Field id="slip" label="Slippage" suffix="%" value={d.slippage} onInput={(v) => set('slippage', v)} />
@@ -207,17 +252,17 @@ export function SettingsScreen(props: { c: Controller }) {
         <h2>My ETH plan</h2>
         <div class="form">
           <div class="pair">
-            <Field id="zl" label="Buy zone low" value={d.zoneLow} onInput={(v) => set('zoneLow', v)} />
-            <Field id="zh" label="Buy zone high" value={d.zoneHigh} onInput={(v) => set('zoneHigh', v)} />
+            <Field id="zl" label="Buy zone low" suffix="ETH price, $" value={d.zoneLow} onInput={(v) => set('zoneLow', v)} />
+            <Field id="zh" label="Buy zone high" suffix="ETH price, $" value={d.zoneHigh} onInput={(v) => set('zoneHigh', v)} />
           </div>
           <div class="pair">
-            <Field id="ba" label="Buy amount" suffix="USDT" value={d.buyAmount} onInput={(v) => set('buyAmount', v)} />
+            <Field id="ba" label="Buy amount" suffix={sym} value={d.buyAmount} onInput={(v) => set('buyAmount', v)} />
             <Field id="be" label="Buy every" suffix="days" value={d.buyEveryDays} onInput={(v) => set('buyEveryDays', v)} />
           </div>
           <Switch id="below" label="Also buy below the zone" checked={d.buyBelowZone} onChange={(v) => set('buyBelowZone', v)} />
           {d.targets.map((t, k) => (
             <div class="pair">
-              <Field id={`tp${k}`} label={`Sell target ${k + 1}`} value={t.price} onInput={(v) => setTarget(k, 'price', v)} />
+              <Field id={`tp${k}`} label={`Sell target ${k + 1}`} suffix="ETH price, $" value={t.price} onInput={(v) => setTarget(k, 'price', v)} />
               <Field id={`tf${k}`} label="Share to sell" suffix="%" value={t.fraction} onInput={(v) => setTarget(k, 'fraction', v)} hint={k === d.targets.length - 1 ? 'The last target sells everything left.' : 'Of the ETH still held.'} />
             </div>
           ))}
@@ -235,7 +280,7 @@ export function SettingsScreen(props: { c: Controller }) {
           </div>
           <Switch id="rep" label="Start again after selling" checked={d.repeat} onChange={(v) => set('repeat', v)} />
           <div class="pair">
-            <Field id="dep" label="Recurring deposit" suffix="USDT" value={d.depositAmount} onInput={(v) => set('depositAmount', v)} hint="0 = none" />
+            <Field id="dep" label="Recurring deposit" suffix={sym} value={d.depositAmount} onInput={(v) => set('depositAmount', v)} hint="0 = none" />
             <Field id="depe" label="Deposit every" suffix="days" value={d.depositEvery} onInput={(v) => set('depositEvery', v)} />
           </div>
           <Field id="ls" label="Long-term simulation start" type="date" value={d.longStart} onInput={(v) => set('longStart', v)} />

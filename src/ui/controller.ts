@@ -5,7 +5,9 @@
  * results form one continuous paper-trading record.
  */
 import type { Kline } from '../data/binance.ts';
+import { loadFx, type FxLoad } from '../data/fx.ts';
 import { LiveFeed, Market, parseWsKline, type FeedStatus } from '../data/market.ts';
+import type { Currency, FxSeries } from '../engine/fx.ts';
 import type { PlanProjection } from '../engine/planProjection.ts';
 import { DEFAULT_SETTINGS, MODES, type ModeId, type Settings } from '../engine/presets.ts';
 import { validateDcaPlan } from '../engine/strategies/dcaPlan.ts';
@@ -24,7 +26,7 @@ export interface Ticker {
   updated: number;
 }
 
-const SETTINGS_KEY = 'confluence.settings.v1';
+const SETTINGS_KEY = 'confluence.settings.v2';
 const UI_KEY = 'confluence.ui.v1';
 
 function safeGet(key: string): unknown {
@@ -49,7 +51,8 @@ export function loadSettings(raw: unknown): Settings {
   const num = (v: unknown, d: number, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : d);
   const merged: Settings = {
     ...DEFAULT_SETTINGS,
-    initialCash: num(s.initialCash, DEFAULT_SETTINGS.initialCash, 100, 1e9),
+    currency: s.currency === 'USD' || s.currency === 'PHP' ? s.currency : DEFAULT_SETTINGS.currency,
+    initialCash: num(s.initialCash, DEFAULT_SETTINGS.initialCash, 100, 1e12),
     feeRate: num(s.feeRate, DEFAULT_SETTINGS.feeRate, 0, 0.01),
     slippage: num(s.slippage, DEFAULT_SETTINGS.slippage, 0, 0.01),
     ethStakingApr: num(s.ethStakingApr, DEFAULT_SETTINGS.ethStakingApr, 0, 0.5),
@@ -81,6 +84,12 @@ export class Controller {
   states = new Map<string, LoadState>();
   tickers = new Map<string, Ticker>();
   feedStatus: FeedStatus = 'connecting';
+  /** Exchange rates for the account currency (null while loading or for USD). */
+  fx: FxSeries | null = null;
+  fxInfo: FxLoad | null = null;
+  fxError: string | null = null;
+  private fxLoading: Promise<FxSeries | null> | null = null;
+  private fxDay = '';
   readonly liveSince = Date.now();
   readonly market: Market;
   readonly engine: EngineClient;
@@ -123,6 +132,51 @@ export class Controller {
     return () => this.listeners.delete(fn);
   }
 
+  /** Latest rate for any currency, loading it if needed (used to convert typed amounts). */
+  async rateFor(cur: Currency): Promise<number> {
+    if (cur === 'USD') return 1;
+    if (this.fx && this.fx.currency === cur) return this.fx.r[this.fx.r.length - 1];
+    const info = await loadFx(cur);
+    return info.fx.r[info.fx.r.length - 1];
+  }
+
+  /** Latest known account-currency units per 1 USDT (1 for USD, NaN while loading). */
+  currentRate(): number {
+    if (this.settings.currency === 'USD') return 1;
+    return this.fx && this.fx.currency === this.settings.currency ? this.fx.r[this.fx.r.length - 1] : Number.NaN;
+  }
+
+  /** Rates for the account currency; reloaded when the day or the currency changes. */
+  ensureFx(): Promise<FxSeries | null> {
+    const currency: Currency = this.settings.currency;
+    const today = new Date().toISOString().slice(0, 10);
+    if (currency === 'USD') {
+      this.fx = null;
+      this.fxInfo = null;
+      this.fxError = null;
+      return Promise.resolve(null);
+    }
+    if (this.fx && this.fx.currency === currency && this.fxDay === today) return Promise.resolve(this.fx);
+    if (this.fxLoading) return this.fxLoading;
+    this.fxLoading = loadFx(currency)
+      .then((info) => {
+        this.fx = info.fx;
+        this.fxInfo = info;
+        this.fxError = null;
+        this.fxDay = today;
+        return info.fx;
+      })
+      .catch((e: unknown) => {
+        this.fxError = e instanceof Error ? e.message : String(e);
+        throw e;
+      })
+      .finally(() => {
+        this.fxLoading = null;
+        this.emit();
+      });
+    return this.fxLoading;
+  }
+
   emit() {
     this.version++;
     for (const fn of this.listeners) fn();
@@ -135,6 +189,11 @@ export class Controller {
   }
 
   setSettings(next: Settings) {
+    if (next.currency !== this.settings.currency) {
+      this.fx = null;
+      this.fxInfo = null;
+      this.fxDay = '';
+    }
     this.settings = next;
     safeSet(SETTINGS_KEY, next);
     // results depend on settings: drop them and recompute what is on screen
@@ -202,7 +261,8 @@ export class Controller {
     this.states.set(key, { phase: 'compute', progress: 1 });
     if (!had) this.emit();
     try {
-      const view = await this.engine.simulate({ symbol, mode, interval: preset.baseTf, rows: set.rows, settings: this.settings, liveSince: this.liveSince });
+      const fx = await this.ensureFx();
+      const view = await this.engine.simulate({ symbol, mode, interval: preset.baseTf, rows: set.rows, settings: this.settings, liveSince: this.liveSince, fx });
       this.views.set(key, view);
       this.states.set(key, { phase: 'ready', progress: 1 });
     } catch (e) {
@@ -299,6 +359,15 @@ export class Controller {
 
   /** Fetch candles missed while disconnected or asleep, then recompute what changed. */
   async repairAll(alsoTickers = false): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.settings.currency !== 'USD' && this.fxDay && this.fxDay !== today) {
+      try {
+        await this.ensureFx();
+        for (const w of this.watchers.values()) for (const m of w.modes) this.scheduleRecompute(w.symbol, m);
+      } catch {
+        /* keep yesterday's rates */
+      }
+    }
     for (const w of this.watchers.values()) {
       try {
         const changed = await this.market.repair(w.symbol, w.interval);
@@ -322,7 +391,8 @@ export class Controller {
 
   async projectPlan(opts: { days: number; demean: boolean; bootstrapFrom: number; paths?: number }): Promise<PlanProjection> {
     const set = this.market.get('ETHUSDT', '1d') ?? (await this.market.load('ETHUSDT', '1d', MODES.long.fetchDays));
-    return this.engine.projectPlan({ rows: set.rows, settings: this.settings, days: opts.days, paths: opts.paths ?? 300, demean: opts.demean, bootstrapFrom: opts.bootstrapFrom });
+    const fx = await this.ensureFx();
+    return this.engine.projectPlan({ rows: set.rows, settings: this.settings, days: opts.days, paths: opts.paths ?? 300, demean: opts.demean, bootstrapFrom: opts.bootstrapFrom, fx });
   }
 }
 

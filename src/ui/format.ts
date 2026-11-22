@@ -6,10 +6,34 @@ export function fmtPrice(p: number): string {
   return p.toLocaleString('en-US', { minimumFractionDigits: Math.min(d, 2), maximumFractionDigits: d });
 }
 
-export function fmtUsd(v: number, compact = false): string {
+export type Money = 'PHP' | 'USD';
+const LOCALE: Record<Money, string> = { PHP: 'en-PH', USD: 'en-US' };
+
+/** Money in the account currency: ₱500,000 / $10,000; compact: ₱1.89M, ₱512K. */
+export function fmtMoney(v: number, cur: Money, compact = false): string {
   if (!Number.isFinite(v)) return '–';
-  if (compact && Math.abs(v) >= 100_000) return `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 0 })}k`;
-  return v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 });
+  if (compact && Math.abs(v) >= 100_000) {
+    return v.toLocaleString(LOCALE[cur], { style: 'currency', currency: cur, notation: 'compact', maximumFractionDigits: Math.abs(v) >= 1e6 ? 2 : 0 });
+  }
+  return v.toLocaleString(LOCALE[cur], { style: 'currency', currency: cur, maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2, minimumFractionDigits: 0 });
+}
+
+/** A price in the account currency with decimals that suit its size (₱108,512 / ₱3.5462 / ₱0.00021876). */
+export function fmtMoneyPrice(v: number, cur: Money): string {
+  if (!Number.isFinite(v)) return '–';
+  const a = Math.abs(v);
+  const d = a >= 1000 ? 0 : a >= 1 ? 2 : a >= 0.01 ? 4 : 8;
+  return v.toLocaleString(LOCALE[cur], { style: 'currency', currency: cur, minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+/** A Binance market price, which is in USDT: $1,701.32. */
+export function fmtUsdt(p: number): string {
+  if (!Number.isFinite(p)) return '–';
+  return `$${fmtPrice(p)}`;
+}
+
+export function moneySymbol(cur: Money): string {
+  return cur === 'PHP' ? '₱' : '$';
 }
 
 export function fmtPct(x: number, digits = 1, sign = true): string {
