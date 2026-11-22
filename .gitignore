@@ -1,6 +1,6 @@
 node_modules/
-dist/
-data/
+/dist/
+/data/
 research/out/
 *.log
 .DS_Store
