@@ -70,7 +70,7 @@ On 15-minute candles, round-trip costs eat about 0.4R per trade (R = the amount 
 
 ## Install on your iPhone
 
-The app is built automatically by GitHub Actions. Download **`Confluence-unsigned.ipa`** from the [**ios-latest** release](../../releases/tag/ios-latest). The release also includes screenshots of that exact build running in the iOS simulator.
+The app is built automatically by GitHub Actions. Download **`Confluence-unsigned.ipa`** from the [**ios-latest** release](https://github.com/rvmendillo/binance/releases/tag/ios-latest). The release also includes screenshots of that exact build running in the iOS simulator.
 
 iOS only runs apps signed for your device, so sign it with your own Apple ID using one of these:
 
