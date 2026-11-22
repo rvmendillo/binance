@@ -137,8 +137,10 @@ function Field(props: { id: string; label: string; value: string; onInput: (v: s
   return (
     <div class="field">
       <label for={props.id}>
-        {props.label}
-        {props.suffix ? <span class="muted"> ({props.suffix})</span> : null}
+        <span>
+          {props.label}
+          {props.suffix ? <span class="muted"> ({props.suffix})</span> : null}
+        </span>
       </label>
       <input id={props.id} type={props.type ?? 'text'} inputMode={props.type === 'date' ? undefined : 'decimal'} value={props.value} onInput={(e) => props.onInput((e.target as HTMLInputElement).value)} />
       {props.hint && <div class="hint">{props.hint}</div>}

@@ -265,12 +265,14 @@ button { cursor: pointer; }
 
 /* ---------- forms ---------- */
 .form { display: grid; gap: 12px; }
-.field { display: grid; gap: 4px; }
+.field { display: grid; gap: 4px; align-content: start; }
 .field label { font-size: 13px; font-weight: 600; }
 .field .hint { font-size: 12px; color: var(--muted); }
 .field input[type='number'], .field input[type='text'], .field input[type='date'], .field select { width: 100%; border: 1px solid var(--line); background: var(--surface-2); border-radius: 10px; padding: 9px 11px; font-size: 16px; font-variant-numeric: tabular-nums; }
 .field input.bad { border-color: var(--sell); }
-.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+/* two label lines reserved in paired fields so the inputs line up */
+.pair .field > label { min-height: calc(2 * 1.45em); line-height: 1.45; display: flex; align-items: flex-end; }
 .switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .switch input { width: 44px; height: 26px; appearance: none; -webkit-appearance: none; background: var(--line); border-radius: 13px; position: relative; flex: none; transition: background 0.2s; }
 .switch input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform 0.2s; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
