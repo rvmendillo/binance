@@ -1,0 +1,30 @@
+// Quick visual smoke run against LIVE Binance data: node e2e/smoke.mjs <outdir> [tab] [mode]
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { chromium, devices } = require('playwright'); // pre-installed globally (NODE_PATH)
+import { createServer } from 'node:http';
+import { readFileSync, mkdirSync } from 'node:fs';
+const out = process.argv[2] ?? 'e2e/out';
+mkdirSync(out, { recursive: true });
+const html = readFileSync(new URL('../dist/index.html', import.meta.url));
+const server = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html); }).listen(0);
+const port = server.address().port;
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ ...devices['iPhone 14'], deviceScaleFactor: 1, colorScheme: process.env.DARK ? 'dark' : 'light' });
+const page = await ctx.newPage();
+const errors = [];
+page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`${m.type()}: ${m.text()}`); });
+page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+await page.goto(`http://localhost:${port}/`);
+const t0 = Date.now();
+await page.waitForSelector('.decision .pill', { timeout: 90000 });
+console.log('decision visible after', Date.now() - t0, 'ms');
+await page.waitForTimeout(1500);
+console.log('decision:', (await page.textContent('.decision')).slice(0, 300));
+console.log('feed:', await page.textContent('[data-testid=feed]'));
+await page.screenshot({ path: `${out}/eth-long.png`, fullPage: true });
+const width = await page.evaluate(() => document.documentElement.scrollWidth);
+console.log('scrollWidth', width, 'viewport', page.viewportSize().width);
+console.log('errors:', errors.length ? errors.join('\n') : 'none');
+await browser.close();
+server.close();

@@ -38,6 +38,9 @@ export interface Trade {
   entryPrice: number;
   /** Average sell price net of fees. */
   exitPrice: number;
+  /** Average buy / sell fill prices (what the exchange filled, before fees). */
+  avgBuyFill: number;
+  avgSellFill: number;
   qtyBought: number;
   cost: number;
   proceeds: number;
@@ -80,6 +83,9 @@ export interface OpenTradeInfo {
   entryTime: number;
   cost: number;
   qtyBought: number;
+  /** Sum of fill price x quantity for buys and sells, for average fill prices. */
+  buyNotional: number;
+  sellNotional: number;
   proceeds: number;
   fees: number;
   sold: number;
@@ -150,6 +156,12 @@ export interface BacktestResult {
   final: Portfolio & { equity: number; price: number };
   notes: { i: number; time: number; text: string }[];
   initialCash: number;
+  /** Orders still working after the last bar (stop, limits, market orders for the next open). */
+  pending: {
+    stop: number | null;
+    limits: { side: 'buy' | 'sell'; price: number; amount: number; reason: string }[];
+    market: { side: 'buy' | 'sell'; amount: number; reason: string }[];
+  };
 }
 
 const YEAR_MS = 365 * 86_400_000;
@@ -190,10 +202,11 @@ export function runBacktest(s: Series, strategy: Strategy, opts: BacktestOptions
     p.qty += qty;
     p.feesPaid += fee;
     if (!st.open) {
-      st.open = { entryIndex: i, entryTime: s.t[i], cost: 0, qtyBought: 0, proceeds: 0, fees: 0, sold: 0, initialRisk: null, entryReason: reason, highSinceEntry: price };
+      st.open = { entryIndex: i, entryTime: s.t[i], cost: 0, qtyBought: 0, buyNotional: 0, sellNotional: 0, proceeds: 0, fees: 0, sold: 0, initialRisk: null, entryReason: reason, highSinceEntry: price };
     }
     st.open.cost += quote;
     st.open.qtyBought += qty;
+    st.open.buyNotional += price * qty;
     st.open.fees += fee;
     const f: Fill = { i, time: s.t[i], side: 'buy', price, qty, quote, fee, reason };
     fills.push(f);
@@ -216,6 +229,7 @@ export function runBacktest(s: Series, strategy: Strategy, opts: BacktestOptions
     if (st.open) {
       st.open.proceeds += gross - fee;
       st.open.sold += qty;
+      st.open.sellNotional += gross;
       st.open.fees += fee;
       if (p.qty === 0) {
         const pnl = st.open.proceeds - st.open.cost;
@@ -226,6 +240,8 @@ export function runBacktest(s: Series, strategy: Strategy, opts: BacktestOptions
           exitIndex: i,
           entryPrice: st.open.cost / st.open.qtyBought,
           exitPrice: st.open.proceeds / st.open.sold,
+          avgBuyFill: st.open.buyNotional / st.open.qtyBought,
+          avgSellFill: st.open.sellNotional / st.open.sold,
           qtyBought: st.open.qtyBought,
           cost: st.open.cost,
           proceeds: st.open.proceeds,
@@ -368,5 +384,10 @@ export function runBacktest(s: Series, strategy: Strategy, opts: BacktestOptions
     final: { ...p, equity: p.cash + p.qty * lastPrice, price: lastPrice },
     notes,
     initialCash: opts.initialCash,
+    pending: {
+      stop,
+      limits: limits.map((o) => ({ side: o.side, price: o.price, amount: o.amount, reason: o.reason })),
+      market: market.map((m) => ({ ...m })),
+    },
   };
 }

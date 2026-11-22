@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "node e2e/run-e2e.mjs",
+    "e2e": "node --test --test-concurrency=1 e2e/app.e2e.mjs",
     "data:download": "node research/download.ts",
     "research": "node research/run-research.ts"
   },

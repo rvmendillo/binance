@@ -81,7 +81,7 @@ function fakeResult(equity: number[], flows?: number[]): BacktestResult {
   const times = equity.map((_, k) => Date.UTC(2024, 0, 1) + k * DAY);
   return {
     strategy: 'x', startIndex: 0, endIndex: equity.length, times, equity, flows: flows ?? equity.map(() => 0), qty: equity.map(() => 1),
-    fills: [], trades: [], openTrade: null, notes: [], initialCash: equity[0],
+    fills: [], trades: [], openTrade: null, notes: [], initialCash: equity[0], pending: { stop: null, limits: [], market: [] },
     final: { cash: 0, qty: 1, feesPaid: 0, stakedQtyEarned: 0, stakingValueEarned: 0, contributed: (flows ?? []).reduce((a, b) => a + b, 0), equity: equity[equity.length - 1], price: equity[equity.length - 1] },
   };
 }

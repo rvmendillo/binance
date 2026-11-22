@@ -101,13 +101,25 @@ function describeConfluence(snap: ConfluenceSnapshot): string {
   return parts.join('; ');
 }
 
+/** Long-term runs start on a fixed date (stable from day to day); intraday modes use a rolling window. */
+export function defaultStartIndex(series: Series, mode: ModeId, settings: Settings): number {
+  if (mode === 'long') {
+    const from = Date.parse(`${settings.longStart}T00:00:00Z`);
+    let k = series.t.findIndex((t) => t >= from);
+    if (k < 0) k = series.t.length - 1;
+    return Math.min(Math.max(k, 250), Math.max(0, series.t.length - 1));
+  }
+  return simStartIndex(series, MODES[mode].simDays, 120);
+}
+
 export function simulate(symbol: string, mode: ModeId, series: Series, settings: Settings, opts: { startIndex?: number } = {}): ModeResult {
   const preset = MODES[mode];
   const isEth = isEthSymbol(symbol);
+  if (series.t.length < 30) throw new Error('Not enough candles to simulate yet');
   const cf = buildConfluence(series, { baseTf: preset.baseTf, tfs: tfsFor(mode, settings) });
   const n = series.t.length;
   const last = n - 1;
-  const startIndex = opts.startIndex ?? simStartIndex(series, preset.simDays, mode === 'long' ? 250 : 120);
+  const startIndex = opts.startIndex ?? defaultStartIndex(series, mode, settings);
   const costs = { feeRate: settings.feeRate, slippage: settings.slippage };
   const stakeApr = isEth ? settings.ethStakingApr : settings.otherStakingApr;
   const base = { initialCash: settings.initialCash, costs, startIndex };
@@ -213,7 +225,11 @@ export function simulate(symbol: string, mode: ModeId, series: Series, settings:
       headline = signal?.reason ?? 'Waiting for data.';
     }
     if (signal) {
-      reasons.push(`Round-trip costs: ${signal.costR.toFixed(2)}R. Estimated win chance ${(signal.p * 100).toFixed(0)}% (${signal.samples} past setups).`);
+      reasons.push(
+        signal.candidate
+          ? `Round-trip costs: ${signal.costR.toFixed(2)}R. Model win chance for this setup ${(signal.p * 100).toFixed(0)}% (learned from ${signal.samples} past setups).`
+          : `Round-trip costs right now: ${signal.costR.toFixed(2)}R of the risk on a trade.`,
+      );
       if (signal.trackN > 0) reasons.push(`Last ${signal.trackN} setups averaged ${signal.trackMean.toFixed(2)}R after costs.`);
     }
     decision = { action, headline, reasons };

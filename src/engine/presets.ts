@@ -92,6 +92,8 @@ export interface Settings {
   customTfs: Partial<Record<ModeId, string[]>>;
   /** Symbols in the Coins tab. */
   coins: string[];
+  /** First simulated day for long-term mode (ISO date). Fixed so results are stable day to day. */
+  longStart: string;
 }
 
 export const DEFAULT_COINS = ['BTCUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'LINKUSDT', 'AVAXUSDT', 'TRXUSDT', 'SUIUSDT'];
@@ -108,6 +110,7 @@ export const DEFAULT_SETTINGS: Settings = {
   trader: { ...DEFAULT_TRADER, shadowWindow: 60, shadowZ: 1.5, evMin: 0.05 },
   customTfs: {},
   coins: DEFAULT_COINS,
+  longStart: '2018-01-01',
 };
 
 export function tfsFor(mode: ModeId, settings: Settings): string[] {
