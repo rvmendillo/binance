@@ -116,7 +116,7 @@ research/         data download and the scripts behind docs/RESEARCH.md
 tests/, e2e/      unit, property and browser tests
 ```
 
-Live paper trading: when a candle closes on Binance's WebSocket, the same simulation is extended by that candle. The live record continues the historical one without a seam. Trades made after you opened the app are tagged LIVE. If the WebSocket is unavailable, the app polls the REST API instead. Candles missed while the phone slept are fetched on wake-up.
+Live paper trading: when a candle closes on Binance's WebSocket, the same simulation is extended by that candle. The live record continues the historical one without a seam. Trades that close after you open the app are tagged LIVE; an open paper position is shown with its entry, current result and stop. If the WebSocket is unavailable, the app polls the REST API instead. Candles missed while the phone slept are fetched on wake-up.
 
 ## Testing
 
