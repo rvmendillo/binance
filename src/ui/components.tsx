@@ -218,6 +218,8 @@ export function ConfluenceCard(props: { view: ModeView }) {
   );
 }
 
+const whole = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: x < 10 ? 4 : 0 });
+
 export function PlanCard(props: { plan: PlanState; run: RunView | undefined; price: number; staking: number; buyAmount: number; buyEveryDays: number }) {
   const p = props.plan;
   const run = props.run;
@@ -234,9 +236,9 @@ export function PlanCard(props: { plan: PlanState; run: RunView | undefined; pri
           <div style={{ position: 'absolute', top: '4px', height: '26px', width: '3px', borderRadius: '2px', background: 'var(--ink)', left: `${zonePos * 100}%`, transform: 'translateX(-50%)' }} />
         </div>
         <div class="row between tiny muted">
-          <span>Zone {fmtPrice(p.zoneLow)}-{fmtPrice(p.zoneHigh)}</span>
-          <span>Now {fmtPrice(props.price)}</span>
-          <span>Target {fmtPrice(p.target)}</span>
+          <span>Zone {whole(p.zoneLow)}-{whole(p.zoneHigh)}</span>
+          <span>Last close {fmtPrice(props.price)}</span>
+          <span>Target {whole(p.target)}</span>
         </div>
         <div class="kv">
           <div>

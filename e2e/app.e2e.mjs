@@ -84,6 +84,7 @@ async function open({ viewport, rest, ws = 'ok', settings } = {}) {
       const r = await rest(url);
       if (r) return route.fulfill(r);
     }
+    if (url.includes('/api/v3/time')) return route.fulfill({ json: { serverTime: await route.request().frame().page().evaluate(() => Date.now()) }, headers: { 'access-control-allow-origin': '*' } });
     if (url.includes('/klines')) return route.fulfill({ json: klines(url), headers: { 'access-control-allow-origin': '*' } });
     if (url.includes('/ticker/24hr')) {
       const syms = JSON.parse(new URL(url).searchParams.get('symbols'));

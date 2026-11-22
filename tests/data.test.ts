@@ -122,6 +122,48 @@ describe('Market (candle store)', () => {
     expect(rows.length).toBeLessThanOrEqual(set.cap);
   });
 
+  it('a wrong device clock cannot turn the forming candle into a closed one', async () => {
+    vi.useFakeTimers();
+    const serverNow = 3000 * MIN + 10_000; // candle 3000 has been open for 10 s
+    vi.setSystemTime(serverNow + 2 * MIN); // the phone runs 2 minutes fast
+    const { fn } = fakeFetch((url) => (url.includes('/time') ? { status: 200, body: { serverTime: serverNow + (Date.now() - (serverNow + 2 * MIN)) } } : klineServer(3001 * MIN)(url)));
+    const m = new Market(new BinanceClient({ fetch: fn, minIntervalMs: 0, sleep: noSleep }));
+    const set = await m.load('ETHUSDT', '1m', 1);
+    expect(set.rows[set.rows.length - 1][0]).toBe(2999 * MIN);
+    expect(set.forming?.t).toBe(3000 * MIN);
+  });
+
+  it('the final values of a closed candle replace whatever was stored for it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100 * MIN + 1);
+    const { fn } = fakeFetch(klineServer(100 * MIN));
+    const m = new Market(new BinanceClient({ fetch: fn, minIntervalMs: 0, sleep: noSleep }));
+    const set = await m.load('ETHUSDT', '1m', 1);
+    const last = set.rows[set.rows.length - 1];
+    const fixed = parseKline(kl(last[0], 777));
+    expect(m.applyKline('ETHUSDT', '1m', fixed, true)).toBe(true);
+    expect(set.rows[set.rows.length - 1][4]).toBe(777);
+    expect(m.applyKline('ETHUSDT', '1m', fixed, true)).toBe(false); // unchanged: no recompute
+  });
+
+  it('ignores an invalid server-time answer instead of corrupting every timestamp', async () => {
+    const { fn } = fakeFetch((url) => (url.includes('/time') ? { status: 200, body: { nope: true } } : { status: 200, body: [] }));
+    const m = new Market(new BinanceClient({ fetch: fn, minIntervalMs: 0, sleep: noSleep }));
+    await m.syncClock();
+    expect(Math.abs(m.now() - Date.now())).toBeLessThan(1000);
+  });
+
+  it('one unknown symbol does not hide the prices of the others', async () => {
+    const { fn } = fakeFetch((url) => {
+      const syms = JSON.parse(new URL(url).searchParams.get('symbols') ?? '[]') as string[];
+      if (syms.includes('FAKEUSDT')) return { status: 400, body: { code: -1121, msg: 'Invalid symbol.' } };
+      return { status: 200, body: syms.map((sy) => ({ symbol: sy, lastPrice: '1', priceChangePercent: '2', highPrice: '1', lowPrice: '1', quoteVolume: '1' })) };
+    });
+    const m = new Market(new BinanceClient({ fetch: fn, minIntervalMs: 0, sleep: noSleep }));
+    const ts = await m.tickers(['BTCUSDT', 'FAKEUSDT', 'SOLUSDT']);
+    expect(ts.map((t) => t.symbol)).toEqual(['BTCUSDT', 'SOLUSDT']);
+  });
+
   it('parses WebSocket kline events', () => {
     const ev = { e: 'kline', k: { t: 0, T: MIN - 1, s: 'ETHUSDT', i: '1m', o: '1', h: '2', l: '0.5', c: '1.5', v: '3', x: true } };
     expect(parseWsKline(ev)).toMatchObject({ closed: true, symbol: 'ETHUSDT', interval: '1m', k: { c: 1.5 } });

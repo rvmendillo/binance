@@ -27,9 +27,36 @@ export class Market {
   readonly client: BinanceClient;
   private sets = new Map<string, CandleSet>();
   private loading = new Map<string, Promise<CandleSet>>();
+  /** Binance server time minus device time, so a wrong phone clock cannot mark a
+   * still-forming candle as closed. */
+  private clockOffset = 0;
+  private clockSynced: Promise<void> | null = null;
 
   constructor(client = new BinanceClient()) {
     this.client = client;
+  }
+
+  /** Current time on Binance's clock (best effort). */
+  now(): number {
+    return Date.now() + this.clockOffset;
+  }
+
+  syncClock(): Promise<void> {
+    if (!this.clockSynced) {
+      this.clockSynced = (async () => {
+        try {
+          const t0 = Date.now();
+          const server = await this.client.serverTime();
+          const t1 = Date.now();
+          const offset = server - (t0 + t1) / 2;
+          // ignore nonsense answers; anything finite is the exchange's clock
+          this.clockOffset = Number.isFinite(offset) ? offset : 0;
+        } catch {
+          this.clockOffset = 0;
+        }
+      })();
+    }
+    return this.clockSynced;
   }
 
   key(symbol: string, interval: string) {
@@ -53,7 +80,8 @@ export class Market {
   private async doLoad(symbol: string, interval: string, days: number, onProgress?: (frac: number) => void): Promise<CandleSet> {
     const key = this.key(symbol, interval);
     const tf = parseTf(interval);
-    const now = Date.now();
+    await this.syncClock();
+    const now = this.now();
     const wantFrom = Math.floor((now - days * DAY) / tf.ms) * tf.ms;
     let rows = this.sets.get(key)?.rows ?? (await readCandles(key)) ?? [];
     if (rows.length && rows[0][0] > wantFrom + tf.ms) rows = []; // cache does not reach back far enough
@@ -61,7 +89,7 @@ export class Market {
     const from = rows.length ? rows[rows.length - 1][0] + 1 : wantFrom;
     const total = Math.max(1, (now - from) / tf.ms);
     const fetched = await this.client.klinesRange(symbol, interval, from, now, (n) => onProgress?.(Math.min(1, n / total)));
-    const { closed, forming } = splitClosed(fetched, Date.now());
+    const { closed, forming } = splitClosed(fetched, this.now());
     for (const k of closed) {
       if (!rows.length || k.t > rows[rows.length - 1][0]) rows.push(klineToRow(k));
     }
@@ -80,6 +108,16 @@ export class Market {
     const last = set.rows[set.rows.length - 1];
     if (closed) {
       set.forming = null;
+      if (last && k.t === last[0]) {
+        // the exchange's final values win over anything stored for that candle
+        const row = klineToRow(k);
+        const changed = row.some((v, j) => v !== last[j]);
+        if (changed) {
+          set.rows[set.rows.length - 1] = row;
+          void writeCandles(this.key(symbol, interval), set.rows);
+        }
+        return changed;
+      }
       if (!last || k.t > last[0]) {
         // a gap means we missed candles while disconnected: the caller repairs it
         set.rows.push(klineToRow(k));
@@ -98,8 +136,8 @@ export class Market {
     const set = this.sets.get(this.key(symbol, interval));
     if (!set || !set.rows.length) return false;
     const before = set.rows.length;
-    const fetched = await this.client.klinesRange(symbol, interval, set.rows[set.rows.length - 1][0] + 1, Date.now());
-    const { closed, forming } = splitClosed(fetched, Date.now());
+    const fetched = await this.client.klinesRange(symbol, interval, set.rows[set.rows.length - 1][0] + 1, this.now());
+    const { closed, forming } = splitClosed(fetched, this.now());
     for (const k of closed) if (k.t > set.rows[set.rows.length - 1][0]) set.rows.push(klineToRow(k));
     if (set.rows.length > set.cap) set.rows.splice(0, set.rows.length - set.cap);
     set.forming = forming ?? set.forming;
@@ -107,8 +145,15 @@ export class Market {
     return set.rows.length !== before;
   }
 
-  tickers(symbols: string[]): Promise<Ticker24h[]> {
-    return this.client.ticker24h(symbols);
+  /** 24h tickers; if the batch fails (e.g. one unknown symbol) each symbol is asked for alone. */
+  async tickers(symbols: string[]): Promise<Ticker24h[]> {
+    try {
+      return await this.client.ticker24h(symbols);
+    } catch (e) {
+      if (symbols.length <= 1) throw e;
+      const each = await Promise.allSettled(symbols.map((s) => this.client.ticker24h([s])));
+      return each.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+    }
   }
 }
 
